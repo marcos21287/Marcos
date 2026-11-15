@@ -1,0 +1,57 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { sma, rsi, detectSignal, technicals } from "../lib/indicators.ts";
+import { runChecks, cagr, yearsWithoutCut, positionSize } from "../lib/checks.ts";
+
+test("sma y rsi", () => {
+  assert.equal(sma([1, 2, 3, 4], 2), 3.5);
+  assert.equal(sma([1], 2), null);
+  const up = Array.from({ length: 30 }, (_, i) => 10 + i);
+  assert.equal(rsi(up), 100);
+  const down = Array.from({ length: 30 }, (_, i) => 100 - i);
+  assert.ok(rsi(down)! < 1);
+});
+
+test("señal de tendencia y de sobreventa", () => {
+  const bar = (c: number, v = 100) => ({ high: c * 1.01, low: c * 0.99, close: c, volume: v });
+  const trend = Array.from({ length: 260 }, (_, i) => bar(50 + i * 0.1 + (i % 2 ? 0.4 : -0.4)));
+  assert.equal(technicals(trend)!.trend, "alcista");
+  assert.equal(detectSignal(trend)!.kind, "Tendencia");
+  const crash = [...trend.slice(0, 240), ...Array.from({ length: 20 }, (_, i) => bar(74 - i * 1.5))];
+  assert.equal(detectSignal(crash)!.kind, "Sobreventa");
+});
+
+test("cagr y años sin recorte", () => {
+  assert.ok(Math.abs(cagr([100, 110, 121])! - 0.1) < 1e-9);
+  assert.equal(cagr([0, 5]), null);
+  const d = (y: number, a: number) => ({ date: new Date(y, 5, 1), amount: a });
+  const now = new Date(2026, 10, 15);
+  assert.equal(yearsWithoutCut([d(2021, 1), d(2022, 0.5), d(2023, 0.6), d(2024, 0.7), d(2025, 0.7), d(2026, 0.3)], now), 3);
+  assert.equal(yearsWithoutCut([d(2020, 1)], now), 0);
+  assert.equal(yearsWithoutCut([], now), null);
+});
+
+test("tamaño de posición", () => {
+  assert.deepEqual(positionSize(1000, 2, 4.62, 4.4).shares, 90);
+  assert.equal(positionSize(1000, 2, 138.72, 131).shares, 2);
+  assert.equal(positionSize(1000, 5, 10, 9.9).shares, 100); // limitado por el capital
+  assert.equal(positionSize(1000, 2, 10, 11).shares, 0);
+});
+
+test("chequeo: bancos no puntúan EBITDA y los datos ausentes no cuentan", () => {
+  const base = {
+    isBank: false, revenueGrowth: 0.08, earningsGrowth: 0.02, roe: 0.2, ebitdaMargin: 0.25, profitMargin: 0.12,
+    freeCashflow: 1, netDebtToEbitda: 1, currentRatio: 1.2, pe: 18, evToEbitda: 10, priceToBook: 3,
+    dividendYield: 0.03, payoutRatio: 0.5, yearsWithoutCut: 6, price: 10, sma50: 9, sma200: 8, rsi: 55,
+  };
+  const r = runChecks(base);
+  assert.equal(r.scored, 16);
+  assert.equal(r.passed, 15);
+  assert.equal(r.verdict, "Sólida");
+  const bank = runChecks({ ...base, isBank: true, priceToBook: 0.9 });
+  const ids = bank.groups.flatMap((g) => g.items).filter((c) => c.status === "na").map((c) => c.id);
+  assert.deepEqual(ids, ["ebitdaMargin", "fcf", "netDebt", "currentRatio"]);
+  assert.equal(bank.scored, 12);
+  const empty = runChecks({ ...base, roe: null, pe: null });
+  assert.equal(empty.scored, 14);
+});
