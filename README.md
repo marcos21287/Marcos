@@ -10,7 +10,8 @@ y del Banco Mundial.
   lista en `lib/universe.ts`) y muestra los 10 con mejor nota entre los que cumplen una señal (ruptura, tendencia o
   sobreventa). La nota suma el chequeo de la empresa y su entorno: macro global (S&P 500, VIX, tipos a 10 años),
   país (índice bursátil, PIB, inflación y paro del Banco Mundial) y sector. Incluye el tamaño de posición para tu
-  capital y riesgo por operación.
+  capital y riesgo por operación, el precio en vivo y lo que cabe esperar según el histórico: cada señal se simula en
+  todos los valores (stop a 2 ATR, objetivo a 4 ATR, salida a las 40 sesiones) para estimar resultado medio y plazo.
 - **Detalle de acción**: gráfico, chequeo automático de fundamentales (ingresos, beneficio, ROE, margen EBITDA,
   deuda, PER, dividendo, técnico…), datos clave, análisis técnico, ingresos anuales, noticias y alertas.
 - **Alertas**: avisos de precio y vigilancia automática de los controles del chequeo.

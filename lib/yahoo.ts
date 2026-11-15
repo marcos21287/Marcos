@@ -2,7 +2,7 @@
 import YahooFinance from "yahoo-finance2";
 import { cagr, runChecks, runContextChecks, yearsWithoutCut, type CheckResult, type ContextResult, type MarketStat } from "./checks";
 import { COUNTRIES, SECTORS, WB_INDICATORS } from "./context";
-import { detectSignal, technicals, type Bar, type Signal, type Technicals } from "./indicators";
+import { backtest, detectSignal, summarize, technicals, STOP_ATR, TARGET_ATR, type Bar, type Signal, type SignalStats, type Technicals, type Trade } from "./indicators";
 import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -102,7 +102,7 @@ export function getHistory(symbol: string, range: Range): Promise<Point[]> {
 
 function getDailyBars(symbol: string): Promise<Bar[]> {
   return cached(`bars:${symbol}`, 15 * MIN, async () => {
-    const res = await yf.chart(symbol, { period1: daysAgo(420), interval: "1d" });
+    const res = await yf.chart(symbol, { period1: daysAgo(800), interval: "1d" });
     return res.quotes
       .filter((q) => n(q.close) !== null && n(q.high) !== null && n(q.low) !== null)
       .map((q) => ({ high: q.high as number, low: q.low as number, close: q.close as number, volume: q.volume ?? 0 }));
@@ -385,6 +385,14 @@ export interface Opportunity {
   entry: number;
   stop: number;
   target: number;
+  /** Ganancia si llega al objetivo y pérdida si salta el stop, en % sobre la entrada. */
+  gainPct: number;
+  lossPct: number;
+  /** Resultado medio esperado según el histórico de esta señal, en % (null si no hay histórico). */
+  expectedPct: number | null;
+  /** Duración media histórica de una operación con esta señal, en sesiones. */
+  expectedDays: number | null;
+  winRate: number | null;
   earningsSoon: boolean;
 }
 
@@ -398,6 +406,8 @@ export interface Scan {
   withSignal: number;
   /** Valores con análisis completo, de los que salen los 10 mejores. */
   analyzed: number;
+  /** Qué pasó históricamente al seguir cada señal en todos los valores revisados. */
+  stats: Record<Signal["kind"], SignalStats | null>;
   failed: number;
   at: number;
 }
@@ -446,6 +456,7 @@ export function getOpportunities(): Promise<Scan> {
 
     // Paso 1: cotizaciones en bloques de 50.
     const candidates: string[] = [];
+    const quoted: string[] = [];
     let scanned = 0;
     const chunks: string[][] = [];
     for (let i = 0; i < universe.length; i += 50) chunks.push(universe.slice(i, i + 50));
@@ -459,6 +470,7 @@ export function getOpportunities(): Promise<Scan> {
           const hi = n(r.fiftyTwoWeekHigh);
           if (r.quoteType !== "EQUITY" || p === null || m50 === null || m200 === null) continue;
           scanned++;
+          quoted.push(r.symbol);
           const trend = p > m50 && m50 > m200;
           const dropped = p < m50 * 0.92;
           const nearHigh = hi !== null && p >= hi * 0.985;
@@ -469,11 +481,16 @@ export function getOpportunities(): Promise<Scan> {
       }
     });
 
-    // Paso 2: histórico de los candidatos para confirmar la señal.
+    // Paso 2: histórico de todos los valores para confirmar la señal de hoy y
+    // medir qué pasó en el pasado al seguir cada señal (stop a 2 ATR, objetivo a 4 ATR).
     const signals: { symbol: string; kind: Signal["kind"]; momentum: number }[] = [];
-    await pool(candidates, 6, async (sym) => {
+    const trades: Trade[] = [];
+    const isCandidate = new Set(candidates);
+    await pool(quoted, 8, async (sym) => {
       try {
         const bars = await getDailyBars(sym);
+        trades.push(...backtest(bars));
+        if (!isCandidate.has(sym)) return;
         const signal = detectSignal(bars);
         const t = technicals(bars);
         if (signal && t && t.sma200) signals.push({ symbol: sym, kind: signal.kind, momentum: t.price / t.sma200 });
@@ -481,6 +498,7 @@ export function getOpportunities(): Promise<Scan> {
         failed++;
       }
     });
+    const stats = summarize(trades);
     signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
 
     // Paso 3: análisis completo de los mejores.
@@ -490,7 +508,10 @@ export function getOpportunities(): Promise<Scan> {
         const a = await getAnalysis(symbol);
         const t = a.technicals;
         if (!a.signal || !t || a.price === null || t.atr === null) return;
-        const stop = a.price - 2 * t.atr;
+        const stop = a.price - STOP_ATR * t.atr;
+        const target = a.price + TARGET_ATR * t.atr;
+        const lossPct = ((a.price - stop) / a.price) * 100;
+        const st = stats[a.signal.kind];
         const growth = a.checks.groups[0].items[0];
         out.push({
           symbol: a.symbol,
@@ -509,7 +530,12 @@ export function getOpportunities(): Promise<Scan> {
           sector: a.context.sector,
           entry: a.price,
           stop,
-          target: a.price + 2 * (a.price - stop),
+          target,
+          gainPct: (target / a.price - 1) * 100,
+          lossPct,
+          expectedPct: st ? st.avgR * lossPct : null,
+          expectedDays: st ? st.avgDays : null,
+          winRate: st ? st.winRate : null,
           earningsSoon: a.keyData.nextEarnings !== null && a.keyData.nextEarnings > Date.now() && a.keyData.nextEarnings - Date.now() < 10 * 86_400_000,
         });
       } catch {
@@ -521,6 +547,6 @@ export function getOpportunities(): Promise<Scan> {
       .filter((o) => o.scored >= 8)
       .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
       .slice(0, TOP);
-    return { items: ranked, analyzed: out.length, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
+    return { items: ranked, stats, analyzed: out.length, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
 }

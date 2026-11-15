@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sma, rsi, detectSignal, technicals } from "../lib/indicators.ts";
+import { sma, rsi, detectSignal, technicals, backtest, summarize } from "../lib/indicators.ts";
 import { runChecks, runContextChecks, cagr, yearsWithoutCut, positionSize } from "../lib/checks.ts";
 
 test("sma y rsi", () => {
@@ -69,4 +69,23 @@ test("entorno: macro, país y sector", () => {
   const bad = runContextChecks({ ...base, vix: 32, inflation: 6, sector: { vsSma200: -0.03, return3m: 0.01 }, gdpGrowth: null });
   assert.equal(bad.scored, 9);
   assert.equal(bad.passed, 5);
+});
+
+test("prueba histórica: tendencia limpia llega al objetivo y un desplome salta el stop", () => {
+  const bar = (c: number) => ({ high: c * 1.01, low: c * 0.99, close: c, volume: 100 });
+  // Lateral con ruido y después subida constante: la señal de tendencia aparece y alcanza el objetivo.
+  const flat = Array.from({ length: 260 }, (_, i) => bar(50 + (i % 2 ? 0.6 : -0.6)));
+  const rise = Array.from({ length: 120 }, (_, i) => bar(50 + i * 0.4 + (i % 2 ? 0.3 : -0.3)));
+  const up = backtest([...flat, ...rise], 200);
+  assert.ok(up.length >= 1);
+  assert.equal(up[0].kind, "Tendencia");
+  assert.equal(up[0].won, true);
+  assert.equal(up[0].r, 2);
+  const stats = summarize(up);
+  assert.equal(stats.Tendencia!.winRate, up.filter((t) => t.won).length / up.length);
+  assert.equal(stats.Ruptura, null);
+  // Subida y desplome inmediato: la operación abierta acaba en el stop.
+  const crash = Array.from({ length: 60 }, (_, i) => bar(Math.max(5, 66 - i * 1.2)));
+  const down = backtest([...flat, ...rise.slice(0, 40), ...crash], 200);
+  assert.ok(down.some((t) => t.r === -1));
 });

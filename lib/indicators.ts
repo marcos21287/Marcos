@@ -133,3 +133,87 @@ export function detectSignal(bars: Bar[]): Signal | null {
   }
   return null;
 }
+
+// ---- Prueba histórica de las señales ----
+
+export interface Trade {
+  kind: SignalKind;
+  /** Resultado en múltiplos del riesgo: −1 si salta el stop, +2 si llega al objetivo. */
+  r: number;
+  /** Sesiones que duró la operación. */
+  days: number;
+  won: boolean;
+}
+
+export const STOP_ATR = 2;
+export const TARGET_ATR = 4;
+export const MAX_HOLD = 40;
+
+/**
+ * Recorre el histórico y simula cada vez que aparece una señal nueva: entrada al cierre,
+ * stop a 2 ATR, objetivo a 4 ATR y salida al cierre si pasan 40 sesiones sin tocar ninguno.
+ */
+export function backtest(bars: Bar[], lookback = 300): Trade[] {
+  const trades: Trade[] = [];
+  let prev: SignalKind | null = null;
+  const start = Math.max(200, bars.length - lookback);
+  for (let t = start; t < bars.length - 1; t++) {
+    const window = bars.slice(Math.max(0, t - 280), t + 1);
+    const kind = detectSignal(window)?.kind ?? null;
+    const isNew = kind !== null && kind !== prev;
+    prev = kind;
+    if (!isNew) continue;
+    const a = atr(window);
+    const entry = bars[t].close;
+    if (!a || !(entry > 0)) continue;
+    const stop = entry - STOP_ATR * a;
+    const target = entry + TARGET_ATR * a;
+    const end = t + MAX_HOLD;
+    if (end >= bars.length) break; // sin datos suficientes para saber cómo acabó
+    let done = false;
+    for (let d = t + 1; d <= end; d++) {
+      if (bars[d].low <= stop) {
+        trades.push({ kind, r: -1, days: d - t, won: false });
+        done = true;
+        break;
+      }
+      if (bars[d].high >= target) {
+        trades.push({ kind, r: TARGET_ATR / STOP_ATR, days: d - t, won: true });
+        done = true;
+        break;
+      }
+    }
+    if (!done) trades.push({ kind, r: (bars[end].close - entry) / (entry - stop), days: MAX_HOLD, won: false });
+  }
+  return trades;
+}
+
+export interface SignalStats {
+  trades: number;
+  /** Fracción de operaciones que llegaron al objetivo. */
+  winRate: number;
+  /** Resultado medio por operación, en múltiplos del riesgo. */
+  avgR: number;
+  /** Duración media de una operación, en sesiones. */
+  avgDays: number;
+  /** Sesiones que tardaron de media las que llegaron al objetivo. */
+  avgDaysToTarget: number | null;
+}
+
+export function summarize(trades: Trade[]): Record<SignalKind, SignalStats | null> {
+  const out: Record<SignalKind, SignalStats | null> = { Ruptura: null, Tendencia: null, Sobreventa: null };
+  for (const kind of Object.keys(out) as SignalKind[]) {
+    const list = trades.filter((t) => t.kind === kind);
+    if (!list.length) continue;
+    const wins = list.filter((t) => t.won);
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    out[kind] = {
+      trades: list.length,
+      winRate: wins.length / list.length,
+      avgR: mean(list.map((t) => t.r)),
+      avgDays: mean(list.map((t) => t.days)),
+      avgDaysToTarget: wins.length ? mean(wins.map((t) => t.days)) : null,
+    };
+  }
+  return out;
+}

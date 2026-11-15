@@ -2,16 +2,29 @@
 import Link from "next/link";
 import { useState } from "react";
 import { positionSize } from "@/lib/checks";
-import { money, parseNumber, timeAgo } from "@/lib/format";
+import { money, parseNumber, plain, signedPct, timeAgo } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import { useFetch } from "@/lib/useFetch";
-import type { Scan } from "@/lib/yahoo";
+import type { Quote, Scan } from "@/lib/yahoo";
+import { Change } from "@/components/Change";
+
+/** Sesiones de bolsa expresadas en semanas (5 sesiones por semana). */
+function weeks(days: number | null): string {
+  if (days === null) return "—";
+  const w = days / 5;
+  return w < 1.5 ? `${Math.round(days)} sesiones` : `unas ${Math.round(w)} semanas`;
+}
+
+const KINDS = ["Ruptura", "Tendencia", "Sobreventa"] as const;
 
 export default function Oportunidades() {
   const [state, update] = useStore();
   const [capitalText, setCapitalText] = useState<string | null>(null);
   const { data, error, loading } = useFetch<Scan>("/api/opportunities");
   const rows = data?.items ?? [];
+  // Precio en vivo de las 10 (el análisis se recalcula cada hora; el precio, cada minuto).
+  const { data: quotes } = useFetch<Quote[]>(rows.length ? `/api/quotes?symbols=${encodeURIComponent(rows.map((o) => o.symbol).join(","))}` : null, 60_000);
+  const live = new Map((quotes ?? []).map((q) => [q.symbol, q]));
   const setCapital = (text: string) => {
     setCapitalText(text);
     const v = parseNumber(text);
@@ -82,9 +95,12 @@ export default function Oportunidades() {
                 <div><dt>Nota total</dt><dd>{o.totalPassed} de {o.totalScored}</dd></div>
                 <div><dt>Empresa</dt><dd>{o.passed} de {o.scored}</dd></div>
                 <div><dt>Entorno</dt><dd>{o.envPassed} de {o.envScored}</dd></div>
-                                <div><dt>Entrada</dt><dd>{money(o.entry, o.currency)}</dd></div>
-                <div><dt>Stop</dt><dd className="down-text">{money(o.stop, o.currency)}</dd></div>
-                <div><dt>Objetivo</dt><dd className="up-text">{money(o.target, o.currency)}</dd></div>
+                                <div><dt>Precio ahora</dt><dd>{money(live.get(o.symbol)?.price ?? o.entry, o.currency)} <Change pct={live.get(o.symbol)?.changePct ?? null} /></dd></div>
+                <div><dt>Stop</dt><dd className="down-text">{money(o.stop, o.currency)} ({signedPct(-o.lossPct, 1)})</dd></div>
+                <div><dt>Objetivo</dt><dd className="up-text">{money(o.target, o.currency)} ({signedPct(o.gainPct, 1)})</dd></div>
+                <div><dt>Resultado medio esperado</dt><dd className={o.expectedPct !== null && o.expectedPct < 0 ? "down-text" : ""}>{o.expectedPct === null ? "Sin histórico" : signedPct(o.expectedPct, 1)}</dd></div>
+                <div><dt>Plazo medio</dt><dd>{weeks(o.expectedDays)}</dd></div>
+                <div><dt>Llega al objetivo</dt><dd>{o.winRate === null ? "—" : `${Math.round(o.winRate * 100)} % de las veces`}</dd></div>
               </dl>
               <div className="opp-side">
                 <div className="size">
@@ -107,10 +123,50 @@ export default function Oportunidades() {
           );
         })}
       </div>
-      <p className="muted small">
-        Stop a 2 veces el rango medio diario (ATR) bajo la entrada; objetivo al doble de esa distancia. El tamaño no convierte divisas: para
-        valores en dólares, el importe está en dólares.
-      </p>
+      {data && (
+        <section className="card pad">
+          <div>
+            <h2>Qué puedes esperar: el histórico de cada señal</h2>
+            <p className="muted">
+              Vigía ha simulado cada señal en los {data.scanned} valores durante algo más de un año: comprar al aparecer la señal, stop a 2 veces
+              el rango medio diario (ATR), objetivo a 4 veces y salida a las 40 sesiones si no toca ninguno.
+            </p>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Señal</th><th>Operaciones</th><th>Llegan al objetivo</th><th>Tardan en llegar</th><th>Duración media</th><th>Resultado medio</th></tr>
+              </thead>
+              <tbody>
+                {KINDS.map((k) => {
+                  const st = data.stats[k];
+                  return (
+                    <tr key={k}>
+                      <th scope="row">{k}</th>
+                      {st ? (
+                        <>
+                          <td>{st.trades.toLocaleString("es-ES")}</td>
+                          <td>{Math.round(st.winRate * 100)} %</td>
+                          <td>{weeks(st.avgDaysToTarget)}</td>
+                          <td>{weeks(st.avgDays)}</td>
+                          <td className={st.avgR < 0 ? "down-text" : "up-text"}>{st.avgR >= 0 ? "+" : "−"}{plain(Math.abs(st.avgR), 2)} veces el riesgo</td>
+                        </>
+                      ) : (
+                        <td colSpan={5}>Sin operaciones en el periodo</td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted small">
+            «Resultado medio esperado» de cada tarjeta = resultado medio histórico de su señal × lo que arriesgas en esa acción. Es una media
+            de muchas operaciones pasadas, sin comisiones ni impuestos: una operación concreta acaba en el stop, en el objetivo o entre medias,
+            y el pasado no garantiza el futuro. El tamaño no convierte divisas: en valores en dólares, el importe está en dólares.
+          </p>
+        </section>
+      )}
     </>
   );
 }
