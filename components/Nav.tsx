@@ -9,6 +9,7 @@ import type { SearchHit } from "@/lib/yahoo";
 const LINKS = [
   { href: "/", label: "Mercado" },
   { href: "/oportunidades", label: "Oportunidades" },
+  { href: "/diario", label: "Diario" },
   { href: "/alertas", label: "Alertas" },
 ];
 

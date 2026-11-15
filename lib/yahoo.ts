@@ -414,6 +414,18 @@ export interface Scan {
 
 const DEEP_LIMIT = 80;
 const TOP = 10;
+/** Para no concentrar las 10 en un solo sector, como mucho 3 de cada uno. */
+const MAX_PER_SECTOR = 3;
+
+function limitPerSector(max: number) {
+  const seen = new Map<string, number>();
+  return (o: Opportunity) => {
+    const key = o.sector ?? "?";
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    return count <= max;
+  };
+}
 const SIGNAL_ORDER = { Ruptura: 0, Sobreventa: 1, Tendencia: 2 } as const;
 
 async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
@@ -546,6 +558,7 @@ export function getOpportunities(): Promise<Scan> {
     const ranked = out
       .filter((o) => o.scored >= 8)
       .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
+      .filter(limitPerSector(MAX_PER_SECTOR))
       .slice(0, TOP);
     return { items: ranked, stats, analyzed: out.length, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });

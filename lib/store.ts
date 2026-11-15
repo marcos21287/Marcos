@@ -21,6 +21,29 @@ export interface Notice {
   good: boolean;
 }
 
+/** Operación simulada del diario (sin dinero real). Los importes en euros usan el cambio del día de la compra. */
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  name: string;
+  currency: string;
+  sector: string | null;
+  signal: string;
+  shares: number;
+  entry: number;
+  stop: number;
+  target: number;
+  /** Unidades de la divisa de la acción por cada euro al abrir. */
+  rate: number;
+  openedAt: number;
+  /** Ganancia media esperada al abrir, en euros, después de costes y antes de impuestos. */
+  expected: number | null;
+  status: "open" | "closed";
+  exit?: number;
+  closedAt?: number;
+  reason?: "objetivo" | "stop" | "plazo" | "manual";
+}
+
 export interface State {
   watchlist: string[];
   alerts: PriceAlert[];
@@ -29,6 +52,10 @@ export interface State {
   /** Acciones con vigilancia automática y el último estado conocido de cada control. */
   watched: Record<string, Record<string, CheckStatus>>;
   notices: Notice[];
+  commission: number;
+  fxPct: number;
+  taxPct: number;
+  trades: PaperTrade[];
 }
 
 const KEY = "vigia:v1";
@@ -40,6 +67,10 @@ export const DEFAULT_STATE: State = {
   risk: 2,
   watched: {},
   notices: [],
+  commission: 1,
+  fxPct: 0.5,
+  taxPct: 19,
+  trades: [],
 };
 
 let current: State | null = null;

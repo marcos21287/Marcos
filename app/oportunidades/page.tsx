@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import { positionSize } from "@/lib/checks";
-import { money, parseNumber, plain, signedPct, timeAgo } from "@/lib/format";
-import { useStore } from "@/lib/store";
+import { afterTax, positionSize, tradeFees } from "@/lib/checks";
+import { money, parseNonNegative, parseNumber, plain, signedMoney, signedPct, timeAgo } from "@/lib/format";
+import { newId, useStore, type State } from "@/lib/store";
+import { costsOf, fxRate, fxSymbol, MAX_OPEN_RISK_PCT, summary } from "@/lib/trades";
 import { useFetch } from "@/lib/useFetch";
 import type { Quote, Scan } from "@/lib/yahoo";
 import { Change } from "@/components/Change";
@@ -22,9 +23,19 @@ export default function Oportunidades() {
   const [capitalText, setCapitalText] = useState<string | null>(null);
   const { data, error, loading } = useFetch<Scan>("/api/opportunities");
   const rows = data?.items ?? [];
-  // Precio en vivo de las 10 (el análisis se recalcula cada hora; el precio, cada minuto).
-  const { data: quotes } = useFetch<Quote[]>(rows.length ? `/api/quotes?symbols=${encodeURIComponent(rows.map((o) => o.symbol).join(","))}` : null, 60_000);
+  // Precio en vivo de las 10 y cambio de divisa (el análisis se recalcula cada hora; el precio, cada minuto).
+  const fxSymbols = [...new Set(rows.map((o) => fxSymbol(o.currency)).filter((x): x is string => !!x))];
+  const liveSymbols = [...rows.map((o) => o.symbol), ...fxSymbols];
+  const { data: quotes } = useFetch<Quote[]>(liveSymbols.length ? `/api/quotes?symbols=${encodeURIComponent(liveSymbols.join(","))}` : null, 60_000);
   const live = new Map((quotes ?? []).map((q) => [q.symbol, q]));
+  const costs = costsOf(state);
+  const book = summary(state);
+  const [costText, setCostText] = useState<Partial<Record<"commission" | "fxPct" | "taxPct", string>>>({});
+  const setCost = (key: "commission" | "fxPct" | "taxPct", text: string) => {
+    setCostText((t) => ({ ...t, [key]: text }));
+    const v = parseNonNegative(text);
+    if (v !== null) update((s) => ({ ...s, [key]: v }) as State);
+  };
   const setCapital = (text: string) => {
     setCapitalText(text);
     const v = parseNumber(text);
@@ -64,9 +75,25 @@ export default function Oportunidades() {
           <span>Pérdida máxima por operación</span>
           <span className="big">{money((state.capital * state.risk) / 100, "EUR")}</span>
         </div>
-        <p className="muted grow">
-          Cuanto más rápido quieras crecer, más riesgo por operación asumes. El tamaño sugerido limita cada pérdida a ese importe si salta el
-          stop.
+        <div className="field">
+          <label htmlFor="commission">Comisión por orden (€)</label>
+          <input id="commission" inputMode="decimal" value={costText.commission ?? String(state.commission)} onChange={(e) => setCost("commission", e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="fx">Cambio de divisa (%)</label>
+          <input id="fx" inputMode="decimal" value={costText.fxPct ?? String(state.fxPct)} onChange={(e) => setCost("fxPct", e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="tax">Impuestos (%)</label>
+          <input id="tax" inputMode="decimal" value={costText.taxPct ?? String(state.taxPct)} onChange={(e) => setCost("taxPct", e.target.value)} />
+        </div>
+        <p className="muted plan-note">
+          Cuanto más rápido quieras crecer, más riesgo por operación asumes. Las ganancias de cada tarjeta ya descuentan estos costes; cámbialos
+          por los de tu bróker cuando lo tengas.
+        </p>
+        <p className={`plan-note ${book.openRiskPct >= MAX_OPEN_RISK_PCT ? "down-text strong" : "muted"}`}>
+          Diario: {book.open.length} {book.open.length === 1 ? "operación abierta" : "operaciones abiertas"}, riesgo abierto {money(book.openRisk, "EUR")} (
+          {plain(book.openRiskPct, 1)} % de tu capital; máximo {MAX_OPEN_RISK_PCT} %), efectivo libre {money(book.cash, "EUR")}.
         </p>
       </section>
 
@@ -77,7 +104,30 @@ export default function Oportunidades() {
 
       <div className="stack">
         {rows.map((o, i) => {
-          const size = positionSize(state.capital, state.risk, o.entry, o.stop);
+          const fxQuote = fxSymbol(o.currency) ? live.get(fxSymbol(o.currency)!)?.price : null;
+          const rate = fxRate(o.currency, fxQuote);
+          const r = rate ?? 1;
+          const size = positionSize(state.capital * r, state.risk, o.entry, o.stop, Math.max(0, book.cash) * r);
+          const costEur = size.cost / r;
+          const fees = tradeFees(costEur, o.currency !== "EUR", costs);
+          const gainNet = afterTax((size.shares * (o.target - o.entry)) / r - fees, costs.taxPct);
+          const lossNet = size.maxLoss / r + fees;
+          const expectedGross = o.expectedPct === null ? null : (costEur * o.expectedPct) / 100 - fees;
+          const expectedNet = expectedGross === null ? null : afterTax(expectedGross, costs.taxPct);
+          const held = book.open.some((t) => t.symbol === o.symbol);
+          const overRisk = book.openRisk + size.maxLoss / r > (state.capital * MAX_OPEN_RISK_PCT) / 100 + 0.01;
+          const simulate = () =>
+            update((s) => ({
+              ...s,
+              trades: [
+                {
+                  id: newId(), symbol: o.symbol, name: o.name, currency: o.currency, sector: o.sector, signal: o.signal.kind,
+                  shares: size.shares, entry: live.get(o.symbol)?.price ?? o.entry, stop: o.stop, target: o.target, rate: r,
+                  openedAt: Date.now(), expected: expectedGross, status: "open",
+                },
+                ...s.trades,
+              ],
+            }));
           return (
             <article key={o.symbol} className="card pad opp">
               <div className="opp-main">
@@ -105,23 +155,32 @@ export default function Oportunidades() {
               <div className="opp-side">
                 <div className="size">
                   <span className="muted small strong">Tamaño sugerido</span>
-                  {size.shares > 0 ? (
+                  {rate === null ? (
+                    <span className="muted small">Cargando el cambio de divisa…</span>
+                  ) : size.shares > 0 ? (
                     <>
-                      <span className="strong num">{size.shares} {size.shares === 1 ? "acción" : "acciones"} · {money(size.cost, o.currency)}</span>
-                      <span className="small num up-text">Ganancia si llega al objetivo: {money(size.shares * (o.target - o.entry), o.currency)}</span>
-                      <span className="small num down-text">Pérdida si salta el stop: {money(size.maxLoss, o.currency)}</span>
-                      <span className="small num strong">
-                        Ganancia media esperada: {o.expectedPct === null ? "sin histórico" : money((size.cost * o.expectedPct) / 100, o.currency)}
+                      <span className="strong num">{size.shares} {size.shares === 1 ? "acción" : "acciones"} · {money(costEur, "EUR")}</span>
+                      <span className="small num up-text">Si llega al objetivo: {signedMoney(gainNet)} netos</span>
+                      <span className="small num down-text">Si salta el stop: {signedMoney(-lossNet)}</span>
+                      <span className={`small num strong ${expectedNet !== null && expectedNet < 0 ? "down-text" : ""}`}>
+                        Ganancia media esperada: {expectedNet === null ? "sin histórico" : `${signedMoney(expectedNet)} netos`}
                       </span>
+                      <span className="muted small num">Costes incluidos: {money(fees, "EUR")}</span>
                     </>
                   ) : (
                     <>
                       <span className="strong">Menos de 1 acción</span>
-                      <span className="muted small">Necesitarías comprar fracciones</span>
+                      <span className="muted small">{book.cash < o.entry / r ? "No queda efectivo libre suficiente" : "Necesitarías comprar fracciones"}</span>
                     </>
                   )}
                 </div>
-                <Link href={`/accion/${encodeURIComponent(o.symbol)}`} className="btn primary">Ver análisis</Link>
+                <div className="actions">
+                  <Link href={`/accion/${encodeURIComponent(o.symbol)}`} className="btn">Ver análisis</Link>
+                  <button type="button" className="btn primary" disabled={held || overRisk || size.shares === 0 || rate === null} onClick={simulate}>
+                    {held ? "En el diario" : "Simular compra"}
+                  </button>
+                </div>
+                {!held && overRisk && size.shares > 0 && <span className="small down-text">Superarías el {MAX_OPEN_RISK_PCT} % de riesgo abierto.</span>}
               </div>
             </article>
           );
@@ -167,7 +226,8 @@ export default function Oportunidades() {
           <p className="muted small">
             «Resultado medio esperado» de cada tarjeta = resultado medio histórico de su señal × lo que arriesgas en esa acción. Es una media
             de muchas operaciones pasadas, sin comisiones ni impuestos: una operación concreta acaba en el stop, en el objetivo o entre medias,
-            y el pasado no garantiza el futuro. El tamaño no convierte divisas: en valores en dólares, el importe está en dólares.
+            y el pasado no garantiza el futuro. Los importes de las tarjetas están en euros al cambio actual, con comisiones, cambio de divisa e
+            impuestos descontados; como mucho aparecen 3 valores de un mismo sector.
           </p>
         </section>
       )}

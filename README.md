@@ -14,6 +14,8 @@ y del Banco Mundial.
   todos los valores (stop a 2 ATR, objetivo a 4 ATR, salida a las 40 sesiones) para estimar resultado medio y plazo.
 - **Detalle de acción**: gráfico, chequeo automático de fundamentales (ingresos, beneficio, ROE, margen EBITDA,
   deuda, PER, dividendo, técnico…), datos clave, análisis técnico, ingresos anuales, noticias y alertas.
+- **Diario**: operaciones simuladas sin dinero real. Se cierran solas al tocar stop u objetivo o a los 56 días, y se
+  compara el resultado con el esperado. Limita el riesgo abierto al 6 % del capital y la compra al efectivo libre.
 - **Alertas**: avisos de precio y vigilancia automática de los controles del chequeo.
 
 Los criterios del chequeo están en `lib/checks.ts` y las señales en `lib/indicators.ts`.
@@ -26,6 +28,11 @@ npm run dev      # http://localhost:3000
 npm test         # pruebas de la lógica
 npm run build && npm start
 ```
+
+## Costes
+
+Las ganancias se muestran en euros al cambio actual y descuentan comisión por orden, cambio de divisa e impuestos.
+Los valores por defecto (1 €, 0,5 % y 19 %) son genéricos y se editan en Oportunidades.
 
 ## Limitaciones
 

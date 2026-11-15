@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sma, rsi, detectSignal, technicals, backtest, summarize } from "../lib/indicators.ts";
-import { runChecks, runContextChecks, cagr, yearsWithoutCut, positionSize } from "../lib/checks.ts";
+import { runChecks, runContextChecks, cagr, yearsWithoutCut, positionSize, tradeFees, afterTax } from "../lib/checks.ts";
 
 test("sma y rsi", () => {
   assert.equal(sma([1, 2, 3, 4], 2), 3.5);
@@ -88,4 +88,15 @@ test("prueba histórica: tendencia limpia llega al objetivo y un desplome salta 
   const crash = Array.from({ length: 60 }, (_, i) => bar(Math.max(5, 66 - i * 1.2)));
   const down = backtest([...flat, ...rise.slice(0, 40), ...crash], 200);
   assert.ok(down.some((t) => t.r === -1));
+});
+
+test("costes: comisiones, cambio de divisa, impuestos y límite de efectivo", () => {
+  const costs = { commission: 1, fxPct: 0.5, taxPct: 19 };
+  assert.equal(tradeFees(500, false, costs), 2);
+  assert.equal(tradeFees(500, true, costs), 7);
+  assert.equal(afterTax(100, 19), 81);
+  assert.equal(afterTax(-20, 19), -20);
+  // Con solo 100 de efectivo libre, la compra no puede superar ese importe.
+  assert.equal(positionSize(1000, 2, 4.62, 4.4, 100).shares, 21);
+  assert.equal(positionSize(1000, 2, 4.62, 4.4, 0).shares, 0);
 });

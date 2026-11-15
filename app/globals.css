@@ -122,7 +122,7 @@ dl, dd { margin: 0; }
 .field input, .field select { min-height: 44px; padding: 0 12px; border: 1px solid #c9ced8; border-radius: 10px; background: var(--card); font-variant-numeric: tabular-nums; }
 .plan { flex-direction: row !important; flex-wrap: wrap; align-items: flex-end; gap: 20px 32px !important; }
 .plan input { width: 140px; font-weight: 600; }
-.plan p { flex-basis: 280px; font-size: 14px; }
+.plan-note { flex: 1 1 100%; font-size: 14px; }
 
 .opp { flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 16px 28px !important; }
 .opp-main { flex: 2 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -181,6 +181,7 @@ td.up-text, td.down-text { font-weight: 600; }
 .alert-row .grow { flex-basis: 240px; }
 .actions { display: flex; gap: 8px; }
 .actions .btn { min-width: 96px; }
+.opp-side .actions .btn { flex: 1; min-width: 0; padding: 0 10px; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 640px) {

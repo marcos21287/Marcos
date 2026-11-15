@@ -2,7 +2,7 @@ export function money(v: number | null | undefined, currency: string, digits = 2
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   if (!currency) return v.toLocaleString("es-ES", { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: "always" });
   try {
-    return v.toLocaleString("es-ES", { style: "currency", currency, minimumFractionDigits: digits, maximumFractionDigits: digits });
+    return v.toLocaleString("es-ES", { style: "currency", currency, minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: "always" });
   } catch {
     return `${v.toFixed(digits).replace(".", ",")} ${currency}`;
   }
@@ -43,4 +43,14 @@ export function timeAgo(t: number | null): string {
 export function parseNumber(text: string): number | null {
   const v = parseFloat(text.trim().replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** Como parseNumber, pero admite el cero (para comisiones e impuestos). */
+export function parseNonNegative(text: string): number | null {
+  const v = parseFloat(text.trim().replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+export function signedMoney(v: number, currency = "EUR"): string {
+  return `${v >= 0 ? "+" : "−"}${money(Math.abs(v), currency)}`;
 }

@@ -171,12 +171,34 @@ export function yearsWithoutCut(dividends: { date: Date; amount: number }[], now
   return count;
 }
 
-/** Tamaño de posición: acciones que limitan la pérdida al riesgo elegido si salta el stop. */
-export function positionSize(capital: number, riskPct: number, entry: number, stop: number) {
+/**
+ * Tamaño de posición: acciones que limitan la pérdida al riesgo elegido si salta el stop.
+ * `cash` es el efectivo disponible (por defecto, todo el capital): la compra nunca lo supera.
+ */
+export function positionSize(capital: number, riskPct: number, entry: number, stop: number, cash = capital) {
   const perShare = entry - stop;
   if (!(capital > 0) || !(perShare > 0) || !(entry > 0)) return { shares: 0, cost: 0, maxLoss: 0 };
-  const shares = Math.floor(Math.min((capital * riskPct) / 100 / perShare, capital / entry));
+  const shares = Math.max(0, Math.floor(Math.min((capital * riskPct) / 100 / perShare, Math.min(capital, cash) / entry)));
   return { shares, cost: shares * entry, maxLoss: shares * perShare };
+}
+
+export interface Costs {
+  /** Comisión por cada orden (compra o venta), en euros. */
+  commission: number;
+  /** Coste del cambio de divisa en cada sentido, en % del importe. */
+  fxPct: number;
+  /** Impuesto sobre las ganancias, en %. */
+  taxPct: number;
+}
+
+/** Costes de ida y vuelta de una operación: dos comisiones y, si no cotiza en euros, dos cambios de divisa. */
+export function tradeFees(costEur: number, foreign: boolean, c: Costs): number {
+  return 2 * c.commission + (foreign ? (2 * costEur * c.fxPct) / 100 : 0);
+}
+
+/** Aplica el impuesto solo a las ganancias. */
+export function afterTax(amount: number, taxPct: number): number {
+  return amount > 0 ? amount * (1 - taxPct / 100) : amount;
 }
 
 // ---- Entorno: macroeconomía global, país y sector ----

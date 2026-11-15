@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { CheckStatus } from "@/lib/checks";
 import { money } from "@/lib/format";
 import { addNotice, getState, notify, update } from "@/lib/store";
+import { MAX_HOLD_DAYS } from "@/lib/trades";
 import type { Analysis, Quote } from "@/lib/yahoo";
 
 async function checkPrices() {
@@ -30,6 +31,36 @@ async function checkPrices() {
         a.cond === "above",
       );
       notify("Alerta de precio", text);
+    }
+    return next;
+  });
+}
+
+/** Cierra las operaciones simuladas que tocan el stop o el objetivo, o que superan el plazo máximo. */
+async function checkTrades() {
+  const open = getState().trades.filter((t) => t.status === "open");
+  if (!open.length) return;
+  const symbols = [...new Set(open.map((t) => t.symbol))];
+  const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`);
+  if (!res.ok) return;
+  const price = new Map(((await res.json()) as Quote[]).map((q) => [q.symbol, q.price]));
+  update((s) => {
+    let next = s;
+    for (const t of s.trades) {
+      const p = price.get(t.symbol);
+      if (t.status !== "open" || p === null || p === undefined) continue;
+      const expired = Date.now() - t.openedAt > MAX_HOLD_DAYS * 86_400_000;
+      const reason = p <= t.stop ? "stop" : p >= t.target ? "objetivo" : expired ? "plazo" : null;
+      if (!reason) continue;
+      const exit = reason === "stop" ? t.stop : reason === "objetivo" ? t.target : p;
+      const text = `Diario: ${t.symbol} cerrada por ${reason} a ${money(exit, t.currency)}`;
+      next = addNotice(
+        { ...next, trades: next.trades.map((x) => (x.id === t.id ? { ...x, status: "closed", exit, closedAt: Date.now(), reason } : x)) },
+        t.symbol,
+        text,
+        reason === "objetivo",
+      );
+      notify("Operación simulada cerrada", text);
     }
     return next;
   });
@@ -65,7 +96,10 @@ async function checkFundamentals() {
 export function AlertRunner() {
   useEffect(() => {
     const safe = (fn: () => Promise<void>) => () => void fn().catch(() => {});
-    const prices = safe(checkPrices);
+    const prices = safe(async () => {
+      await checkPrices();
+      await checkTrades();
+    });
     const funds = safe(checkFundamentals);
     prices();
     funds();
