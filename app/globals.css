@@ -88,6 +88,7 @@ dl, dd { margin: 0; }
 .ticker { flex: none; min-width: 52px; padding: 5px 8px; border-radius: 7px; background: var(--soft); color: var(--ink); text-align: center; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
 .ticker.dark { background: var(--ink); color: #fff; min-width: 0; padding: 5px 10px; }
 .ticker.link { display: flex; align-items: center; justify-content: center; min-height: 44px; text-decoration: none; }
+.rank { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
 .tag { padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tag.blue { background: #e6edfb; color: #1e40af; }
 .tag.green { background: var(--up-bg); color: var(--up-ink); }

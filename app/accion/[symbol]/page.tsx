@@ -3,7 +3,7 @@ import Link from "next/link";
 import { use, useState } from "react";
 import { Change } from "@/components/Change";
 import { Chart } from "@/components/Chart";
-import type { CheckStatus } from "@/lib/checks";
+import type { CheckGroup, CheckStatus } from "@/lib/checks";
 import { compact, money, parseNumber, plain, signedPct, timeAgo } from "@/lib/format";
 import { newId, useStore } from "@/lib/store";
 import { useFetch } from "@/lib/useFetch";
@@ -31,6 +31,30 @@ function StatusIcon({ status }: { status: CheckStatus }) {
       <circle cx="10" cy="10" r="9" fill="none" stroke="var(--muted-icon)" strokeWidth="2" />
       <path d="M6 10h8" stroke="var(--muted-icon)" strokeWidth="2" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function CheckGrid({ groups }: { groups: CheckGroup[] }) {
+  return (
+    <div className="check-grid">
+      {groups.map((g) => (
+        <div key={g.name}>
+          <h3>{g.name}</h3>
+          {g.items.map((c) => (
+            <div key={c.id} className="check">
+              <StatusIcon status={c.status} />
+              <div className="grow">
+                <div className="check-top">
+                  <span>{c.label}</span>
+                  <span className="strong num">{c.value}</span>
+                </div>
+                <span className="muted small">{c.rule}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -127,25 +151,7 @@ export default function Accion({ params }: { params: Promise<{ symbol: string }>
             <div className="bar" aria-hidden="true">
               <div style={{ width: `${a.checks.scored ? (a.checks.passed / a.checks.scored) * 100 : 0}%` }} />
             </div>
-            <div className="check-grid">
-              {a.checks.groups.map((g) => (
-                <div key={g.name}>
-                  <h3>{g.name}</h3>
-                  {g.items.map((c) => (
-                    <div key={c.id} className="check">
-                      <StatusIcon status={c.status} />
-                      <div className="grow">
-                        <div className="check-top">
-                          <span>{c.label}</span>
-                          <span className="strong num">{c.value}</span>
-                        </div>
-                        <span className="muted small">{c.rule}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+            <CheckGrid groups={a.checks.groups} />
             <div className="watch">
               <div className="grow">
                 <div id="vigilancia" className="strong">Vigilancia automática</div>
@@ -155,6 +161,20 @@ export default function Accion({ params }: { params: Promise<{ symbol: string }>
                 <span />
               </button>
             </div>
+          </section>
+
+          <section className="card pad">
+            <div className="card-head flat">
+              <div>
+                <h2>Entorno: macro, país y sector</h2>
+                <span className="muted">Lo que rodea a la empresa. Nota total con el chequeo: {a.total.passed} de {a.total.scored}.</span>
+              </div>
+              <span className="big">{a.context.passed} de {a.context.scored}</span>
+            </div>
+            <CheckGrid groups={a.context.groups} />
+            <p className="muted small">
+              PIB, inflación y paro: Banco Mundial, último dato anual. El sector se mide con su fondo cotizado de EE. UU. como termómetro global.
+            </p>
           </section>
 
           <section className="card pad">

@@ -1,6 +1,7 @@
 // Acceso a Yahoo Finance (gratuito, sin clave, datos con retraso) con caché en memoria.
 import YahooFinance from "yahoo-finance2";
-import { cagr, runChecks, yearsWithoutCut, type CheckResult } from "./checks";
+import { cagr, runChecks, runContextChecks, yearsWithoutCut, type CheckResult, type ContextResult, type MarketStat } from "./checks";
+import { COUNTRIES, SECTORS, WB_INDICATORS } from "./context";
 import { detectSignal, technicals, type Bar, type Signal, type Technicals } from "./indicators";
 import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
@@ -135,6 +136,97 @@ function getNews(query: string): Promise<(NewsItem & { tickers: string[] })[]> {
   });
 }
 
+const NO_STAT: MarketStat = { vsSma200: null, return3m: null };
+
+/** Tendencia y rentabilidad a 3 meses de un índice o fondo. */
+async function marketStat(symbol: string): Promise<MarketStat & { last: number | null; ago3m: number | null }> {
+  try {
+    const bars = await getDailyBars(symbol);
+    const closes = bars.map((b) => b.close);
+    const last = closes[closes.length - 1] ?? null;
+    const ago3m = closes.length > 63 ? closes[closes.length - 64] : null;
+    const avg = closes.length >= 200 ? closes.slice(-200).reduce((x, y) => x + y, 0) / 200 : null;
+    return { last, ago3m, vsSma200: last !== null && avg ? last / avg - 1 : null, return3m: last !== null && ago3m ? last / ago3m - 1 : null };
+  } catch {
+    return { ...NO_STAT, last: null, ago3m: null };
+  }
+}
+
+interface CountryMacro {
+  gdp: number | null;
+  inflation: number | null;
+  unemployment: number | null;
+  unemploymentPrev: number | null;
+  year: string | null;
+}
+
+/** PIB, inflación y paro de todos los países (Banco Mundial, datos anuales). */
+function getMacro(): Promise<Record<string, CountryMacro>> {
+  return cached("macro", 24 * 60 * MIN, async () => {
+    const isos = Object.values(COUNTRIES).map((c) => c.iso).join(";");
+    const out: Record<string, CountryMacro> = {};
+    const slot = (iso: string) => (out[iso] ??= { gdp: null, inflation: null, unemployment: null, unemploymentPrev: null, year: null });
+    await Promise.all(
+      (Object.keys(WB_INDICATORS) as (keyof typeof WB_INDICATORS)[]).map(async (key) => {
+        try {
+          const res = await fetch(`https://api.worldbank.org/v2/country/${isos}/indicator/${WB_INDICATORS[key]}?format=json&mrnev=2&per_page=200`);
+          const body = (await res.json()) as [unknown, { countryiso3code: string; date: string; value: number | null }[] | null];
+          const seen = new Set<string>();
+          for (const row of body[1] ?? []) {
+            if (row.value === null) continue;
+            const m = slot(row.countryiso3code);
+            if (!seen.has(row.countryiso3code)) {
+              seen.add(row.countryiso3code);
+              m[key] = row.value;
+              if (key === "gdp") m.year = row.date;
+            } else if (key === "unemployment" && m.unemploymentPrev === null) {
+              m.unemploymentPrev = row.value;
+            }
+          }
+        } catch {
+          // Sin datos del Banco Mundial: esos controles salen como «Sin datos».
+        }
+      }),
+    );
+    return out;
+  });
+}
+
+export interface Context extends ContextResult {
+  country: string | null;
+  sector: string | null;
+}
+
+/** Entorno de una acción: macro global, su país y su sector. */
+export async function getContext(country: string | null, sector: string | null): Promise<Context> {
+  const c = country ? COUNTRIES[country] : undefined;
+  const sec = sector ? SECTORS[sector] : undefined;
+  const [world, vix, tnx, idx, etf, macro] = await Promise.all([
+    marketStat("^GSPC"),
+    marketStat("^VIX"),
+    marketStat("^TNX"),
+    c ? marketStat(c.index) : Promise.resolve({ ...NO_STAT, last: null, ago3m: null }),
+    sec ? marketStat(sec.etf) : Promise.resolve({ ...NO_STAT, last: null, ago3m: null }),
+    getMacro().catch(() => ({}) as Record<string, CountryMacro>),
+  ]);
+  const m = c ? macro[c.iso] : undefined;
+  const result = runContextChecks({
+    world,
+    vix: vix.last,
+    yieldChange3m: tnx.last !== null && tnx.ago3m !== null ? tnx.last - tnx.ago3m : null,
+    countryName: c?.name ?? country,
+    countryIndex: idx,
+    gdpGrowth: m?.gdp ?? null,
+    inflation: m?.inflation ?? null,
+    unemployment: m?.unemployment ?? null,
+    unemploymentPrev: m?.unemploymentPrev ?? null,
+    macroYear: m?.year ?? null,
+    sectorName: sec?.name ?? sector,
+    sector: etf,
+  });
+  return { ...result, country: c?.name ?? country, sector: sec?.name ?? sector };
+}
+
 export interface Analysis {
   symbol: string;
   name: string;
@@ -166,6 +258,9 @@ export interface Analysis {
   technicals: Technicals | null;
   signal: Signal | null;
   checks: CheckResult;
+  context: Context;
+  /** Suma de controles de empresa y de entorno. */
+  total: { passed: number; scored: number };
 }
 
 export function getAnalysis(symbol: string): Promise<Analysis> {
@@ -194,6 +289,7 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
     const debt = n(fd?.totalDebt);
     const cash = n(fd?.totalCash);
     const dividendYield = n(sd?.trailingAnnualDividendYield) ?? n(sd?.dividendYield);
+    const context = await getContext(profile?.country ?? null, profile?.sector ?? null);
     const earningsDate = summary.calendarEvents?.earnings?.earningsDate?.[0];
     const checks = runChecks({
       isBank,
@@ -247,6 +343,8 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
       technicals: tech,
       signal: detectSignal(bars),
       checks,
+      context,
+      total: { passed: checks.passed + context.passed, scored: checks.scored + context.scored },
     };
   });
 }
@@ -278,6 +376,12 @@ export interface Opportunity {
   revenueGrowth: string;
   passed: number;
   scored: number;
+  envPassed: number;
+  envScored: number;
+  totalPassed: number;
+  totalScored: number;
+  country: string | null;
+  sector: string | null;
   entry: number;
   stop: number;
   target: number;
@@ -292,11 +396,14 @@ export interface Scan {
   candidates: number;
   /** Valores con señal confirmada. */
   withSignal: number;
+  /** Valores con análisis completo, de los que salen los 10 mejores. */
+  analyzed: number;
   failed: number;
   at: number;
 }
 
 const DEEP_LIMIT = 80;
+const TOP = 10;
 const SIGNAL_ORDER = { Ruptura: 0, Sobreventa: 1, Tendencia: 2 } as const;
 
 async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
@@ -394,6 +501,12 @@ export function getOpportunities(): Promise<Scan> {
           revenueGrowth: growth.status === "na" ? "Sin datos" : growth.value,
           passed: a.checks.passed,
           scored: a.checks.scored,
+          envPassed: a.context.passed,
+          envScored: a.context.scored,
+          totalPassed: a.total.passed,
+          totalScored: a.total.scored,
+          country: a.context.country,
+          sector: a.context.sector,
           entry: a.price,
           stop,
           target: a.price + 2 * (a.price - stop),
@@ -403,7 +516,11 @@ export function getOpportunities(): Promise<Scan> {
         failed++;
       }
     });
-    out.sort((x, y) => y.passed / (y.scored || 1) - x.passed / (x.scored || 1) || y.scored - x.scored);
-    return { items: out, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
+    // Solo cuentan los valores con datos suficientes; se ordenan por la nota total y se dejan los 10 mejores.
+    const ranked = out
+      .filter((o) => o.scored >= 8)
+      .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
+      .slice(0, TOP);
+    return { items: ranked, analyzed: out.length, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
 }

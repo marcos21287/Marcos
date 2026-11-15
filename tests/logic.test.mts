@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sma, rsi, detectSignal, technicals } from "../lib/indicators.ts";
-import { runChecks, cagr, yearsWithoutCut, positionSize } from "../lib/checks.ts";
+import { runChecks, runContextChecks, cagr, yearsWithoutCut, positionSize } from "../lib/checks.ts";
 
 test("sma y rsi", () => {
   assert.equal(sma([1, 2, 3, 4], 2), 3.5);
@@ -54,4 +54,19 @@ test("chequeo: bancos no puntúan EBITDA y los datos ausentes no cuentan", () =>
   assert.equal(bank.scored, 12);
   const empty = runChecks({ ...base, roe: null, pe: null });
   assert.equal(empty.scored, 14);
+});
+
+test("entorno: macro, país y sector", () => {
+  const good = { vsSma200: 0.05, return3m: 0.04 };
+  const base = {
+    world: good, vix: 18, yieldChange3m: 0.1, countryName: "España", countryIndex: good,
+    gdpGrowth: 2.8, inflation: 2.9, unemployment: 11, unemploymentPrev: 11.4, macroYear: "2025",
+    sectorName: "Finanzas", sector: { vsSma200: 0.02, return3m: 0.06 },
+  };
+  const r = runContextChecks(base);
+  assert.equal(r.scored, 10);
+  assert.equal(r.passed, 10);
+  const bad = runContextChecks({ ...base, vix: 32, inflation: 6, sector: { vsSma200: -0.03, return3m: 0.01 }, gdpGrowth: null });
+  assert.equal(bad.scored, 9);
+  assert.equal(bad.passed, 5);
 });

@@ -178,3 +178,83 @@ export function positionSize(capital: number, riskPct: number, entry: number, st
   const shares = Math.floor(Math.min((capital * riskPct) / 100 / perShare, capital / entry));
   return { shares, cost: shares * entry, maxLoss: shares * perShare };
 }
+
+// ---- Entorno: macroeconomía global, país y sector ----
+
+export interface MarketStat {
+  /** Precio dividido por su media de 200 sesiones, menos 1. */
+  vsSma200: number | null;
+  /** Rentabilidad de los últimos 3 meses (0,05 = 5 %). */
+  return3m: number | null;
+}
+
+export interface ContextInput {
+  world: MarketStat; // bolsa mundial (S&P 500)
+  vix: number | null;
+  /** Variación del tipo a 10 años de EE. UU. en 3 meses, en puntos porcentuales. */
+  yieldChange3m: number | null;
+  countryName: string | null;
+  countryIndex: MarketStat;
+  gdpGrowth: number | null; // % anual
+  inflation: number | null; // % anual
+  unemployment: number | null; // %
+  unemploymentPrev: number | null;
+  macroYear: string | null;
+  sectorName: string | null;
+  sector: MarketStat;
+}
+
+export interface ContextResult {
+  groups: CheckGroup[];
+  passed: number;
+  scored: number;
+}
+
+export function runContextChecks(i: ContextInput): ContextResult {
+  const above = (v: number) => (v > 0 ? "Por encima" : "Por debajo");
+  const year = i.macroYear ? ` (${i.macroYear})` : "";
+  const rel = i.sector.return3m !== null && i.world.return3m !== null ? i.sector.return3m - i.world.return3m : null;
+  const groups: CheckGroup[] = [
+    {
+      name: "Macro global",
+      items: [
+        check("worldTrend", "Bolsa mundial (S&P 500)", "Criterio: por encima de su media de 200 sesiones", i.world.vsSma200, above, (v) => v > 0),
+        check("vix", "Volatilidad (VIX)", "Criterio: por debajo de 25, mercado sin pánico", i.vix, (v) => num(v), (v) => v < 25),
+        check(
+          "yields",
+          "Tipos a 10 años en EE. UU.",
+          "Criterio: no suben más de 0,5 puntos en 3 meses",
+          i.yieldChange3m,
+          (v) => `${v >= 0 ? "+" : "−"}${num(Math.abs(v), 2)} puntos`,
+          (v) => v < 0.5,
+        ),
+      ],
+    },
+    {
+      name: i.countryName ? `País: ${i.countryName}` : "País",
+      items: [
+        check("countryTrend", "Bolsa del país", "Criterio: índice por encima de su media de 200 sesiones", i.countryIndex.vsSma200, above, (v) => v > 0),
+        check("country3m", "Bolsa del país, 3 meses", "Criterio: en positivo", i.countryIndex.return3m, (v) => pct(v), (v) => v > 0),
+        check("gdp", `Crecimiento del PIB${year}`, "Criterio: más del 1 % anual", i.gdpGrowth, (v) => pct(v / 100), (v) => v > 1),
+        check("inflation", `Inflación${year}`, "Criterio: entre el 0 % y el 4 %", i.inflation, (v) => plainPct(v / 100), (v) => v >= 0 && v <= 4),
+        check(
+          "unemployment",
+          `Paro${year}`,
+          "Criterio: no sube respecto al año anterior",
+          i.unemployment !== null && i.unemploymentPrev !== null ? i.unemployment - i.unemploymentPrev : null,
+          () => plainPct((i.unemployment ?? 0) / 100),
+          (v) => v <= 0.1,
+        ),
+      ],
+    },
+    {
+      name: i.sectorName ? `Sector: ${i.sectorName}` : "Sector",
+      items: [
+        check("sectorTrend", "Tendencia del sector", "Criterio: sector por encima de su media de 200 sesiones", i.sector.vsSma200, above, (v) => v > 0),
+        check("sectorRel", "Sector frente al mercado, 3 meses", "Criterio: el sector lo hace mejor que la bolsa mundial", rel, (v) => `${pct(v)}`, (v) => v > 0),
+      ],
+    },
+  ];
+  const all = groups.flatMap((g) => g.items);
+  return { groups, passed: all.filter((c) => c.status === "ok").length, scored: all.filter((c) => c.status !== "na").length };
+}

@@ -7,14 +7,11 @@ import { useStore } from "@/lib/store";
 import { useFetch } from "@/lib/useFetch";
 import type { Scan } from "@/lib/yahoo";
 
-const FILTERS = ["Todas", "Ruptura", "Tendencia", "Sobreventa"] as const;
-
 export default function Oportunidades() {
   const [state, update] = useStore();
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Todas");
   const [capitalText, setCapitalText] = useState<string | null>(null);
   const { data, error, loading } = useFetch<Scan>("/api/opportunities");
-  const rows = (data?.items ?? []).filter((o) => filter === "Todas" || o.signal.kind === filter);
+  const rows = data?.items ?? [];
   const setCapital = (text: string) => {
     setCapitalText(text);
     const v = parseNumber(text);
@@ -25,10 +22,10 @@ export default function Oportunidades() {
     <>
       <div className="head">
         <div>
-          <h1>Oportunidades</h1>
+          <h1>Las 10 mejores oportunidades</h1>
           <p className="muted">
             {data
-              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y aquí están los ${data.items.length} mejores, con su chequeo de fundamentales y el tamaño de posición para tu capital.`
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector).`
               : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
@@ -60,38 +57,32 @@ export default function Oportunidades() {
         </p>
       </section>
 
-      <div role="group" aria-label="Tipo de señal" className="chips">
-        {FILTERS.map((f) => (
-          <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
-            {f}
-          </button>
-        ))}
-      </div>
-
       {loading && <p className="card empty">Analizando cientos de valores… la primera vez puede tardar cerca de un minuto.</p>}
       {error && <p className="error">{error}</p>}
-      {data && rows.length === 0 && <p className="card empty">Hoy no hay valores con esta señal.</p>}
+      {data && rows.length === 0 && <p className="card empty">Hoy ningún valor cumple una señal.</p>}
       {data && data.failed > 0 && <p className="muted small">No se pudieron analizar {data.failed} valores.</p>}
 
       <div className="stack">
-        {rows.map((o) => {
+        {rows.map((o, i) => {
           const size = positionSize(state.capital, state.risk, o.entry, o.stop);
           return (
             <article key={o.symbol} className="card pad opp">
               <div className="opp-main">
                 <div className="opp-title">
+                  <span className="rank">{i + 1}</span>
                   <span className="ticker dark">{o.symbol.replace(".MC", "")}</span>
                   <span className="strong">{o.name}</span>
                   <span className="tag blue">{o.signal.kind}</span>
                   {o.earningsSoon && <span className="tag">Resultados en menos de 10 días</span>}
                 </div>
                 <p className="muted">{o.signal.why}</p>
+                <p className="muted small">{[o.country, o.sector, `RSI ${o.rsi === null ? "—" : Math.round(o.rsi)}`, `ingresos ${o.revenueGrowth}`].filter(Boolean).join(" · ")}</p>
               </div>
               <dl className="stats">
-                <div><dt>Chequeo</dt><dd>{o.passed} de {o.scored}</dd></div>
-                <div><dt>RSI (14)</dt><dd>{o.rsi === null ? "—" : Math.round(o.rsi)}</dd></div>
-                <div><dt>Ingresos</dt><dd>{o.revenueGrowth}</dd></div>
-                <div><dt>Entrada</dt><dd>{money(o.entry, o.currency)}</dd></div>
+                <div><dt>Nota total</dt><dd>{o.totalPassed} de {o.totalScored}</dd></div>
+                <div><dt>Empresa</dt><dd>{o.passed} de {o.scored}</dd></div>
+                <div><dt>Entorno</dt><dd>{o.envPassed} de {o.envScored}</dd></div>
+                                <div><dt>Entrada</dt><dd>{money(o.entry, o.currency)}</dd></div>
                 <div><dt>Stop</dt><dd className="down-text">{money(o.stop, o.currency)}</dd></div>
                 <div><dt>Objetivo</dt><dd className="up-text">{money(o.target, o.currency)}</dd></div>
               </dl>
