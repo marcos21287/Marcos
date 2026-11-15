@@ -108,7 +108,11 @@ export default function Oportunidades() {
                   {size.shares > 0 ? (
                     <>
                       <span className="strong num">{size.shares} {size.shares === 1 ? "acción" : "acciones"} · {money(size.cost, o.currency)}</span>
-                      <span className="muted small num">Pérdida si salta el stop: {money(size.maxLoss, o.currency)}</span>
+                      <span className="small num up-text">Ganancia si llega al objetivo: {money(size.shares * (o.target - o.entry), o.currency)}</span>
+                      <span className="small num down-text">Pérdida si salta el stop: {money(size.maxLoss, o.currency)}</span>
+                      <span className="small num strong">
+                        Ganancia media esperada: {o.expectedPct === null ? "sin histórico" : money((size.cost * o.expectedPct) / 100, o.currency)}
+                      </span>
                     </>
                   ) : (
                     <>
