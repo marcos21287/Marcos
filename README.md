@@ -5,7 +5,8 @@ App web para analizar acciones y recibir alertas, con datos gratuitos de Yahoo F
 ## Qué hace
 
 - **Mercado**: índices principales y tu lista de seguimiento.
-- **Oportunidades**: revisa sola un universo de 24 valores (IBEX y EE. UU.) y muestra los que cumplen una señal
+- **Oportunidades**: revisa sola cientos de valores (IBEX 35, grandes de Europa y EE. UU., más los más activos del día;
+  lista en `lib/universe.ts`) y muestra los que cumplen una señal
   (ruptura, tendencia o sobreventa), con su chequeo y el tamaño de posición para tu capital y riesgo por operación.
 - **Detalle de acción**: gráfico, chequeo automático de fundamentales (ingresos, beneficio, ROE, margen EBITDA,
   deuda, PER, dividendo, técnico…), datos clave, análisis técnico, ingresos anuales, noticias y alertas.

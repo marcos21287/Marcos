@@ -2,6 +2,7 @@
 import YahooFinance from "yahoo-finance2";
 import { cagr, runChecks, yearsWithoutCut, type CheckResult } from "./checks";
 import { detectSignal, technicals, type Bar, type Signal, type Technicals } from "./indicators";
+import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -268,12 +269,6 @@ export async function getStockNews(symbol: string, names: string[]): Promise<New
   return [];
 }
 
-// Universo que Vigía revisa sola en busca de oportunidades.
-export const UNIVERSE = [
-  "SAN.MC", "BBVA.MC", "ITX.MC", "IBE.MC", "TEF.MC", "REP.MC", "CABK.MC", "AENA.MC", "FER.MC", "AMS.MC", "ACS.MC", "ELE.MC",
-  "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "JPM", "KO", "JNJ", "V", "COST",
-];
-
 export interface Opportunity {
   symbol: string;
   name: string;
@@ -289,40 +284,126 @@ export interface Opportunity {
   earningsSoon: boolean;
 }
 
-export function getOpportunities(): Promise<{ items: Opportunity[]; scanned: number; failed: number; at: number }> {
-  return cached("opps", 30 * MIN, async () => {
-    const out: Opportunity[] = [];
-    let failed = 0;
-    const queue = [...UNIVERSE];
-    const worker = async () => {
-      for (let sym = queue.shift(); sym; sym = queue.shift()) {
-        try {
-          const a = await getAnalysis(sym);
-          const t = a.technicals;
-          if (!a.signal || !t || a.price === null || t.atr === null) continue;
-          const stop = a.price - 2 * t.atr;
-          const growth = a.checks.groups[0].items[0];
-          out.push({
-            symbol: a.symbol,
-            name: a.name,
-            currency: a.currency,
-            signal: a.signal,
-            rsi: t.rsi,
-            revenueGrowth: growth.status === "na" ? "Sin datos" : growth.value,
-            passed: a.checks.passed,
-            scored: a.checks.scored,
-            entry: a.price,
-            stop,
-            target: a.price + 2 * (a.price - stop),
-            earningsSoon: a.keyData.nextEarnings !== null && a.keyData.nextEarnings > Date.now() && a.keyData.nextEarnings - Date.now() < 10 * 86_400_000,
-          });
-        } catch {
-          failed++;
-        }
+export interface Scan {
+  items: Opportunity[];
+  /** Valores con cotización revisados. */
+  scanned: number;
+  /** Valores que superan el filtro previo y cuyo histórico se ha analizado. */
+  candidates: number;
+  /** Valores con señal confirmada. */
+  withSignal: number;
+  failed: number;
+  at: number;
+}
+
+const DEEP_LIMIT = 80;
+const SIGNAL_ORDER = { Ruptura: 0, Sobreventa: 1, Tendencia: 2 } as const;
+
+async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
+  const queue = [...items];
+  await Promise.all(
+    Array.from({ length: size }, async () => {
+      for (let it = queue.shift(); it !== undefined; it = queue.shift()) await fn(it);
+    }),
+  );
+}
+
+/** Universo del día: lista fija más lo que devuelven los filtros públicos de Yahoo. */
+async function loadUniverse(): Promise<string[]> {
+  const extra: string[] = [];
+  await Promise.all(
+    SCREENERS.map(async (id) => {
+      try {
+        const res = await yf.screener({ scrIds: id, count: 100 });
+        for (const q of res.quotes) if (q.symbol && validUniverseSymbol(q.symbol)) extra.push(q.symbol);
+      } catch {
+        // Si un filtro falla, se sigue con la lista fija.
       }
-    };
-    await Promise.all(Array.from({ length: 5 }, worker));
-    out.sort((x, y) => y.passed / (y.scored || 1) - x.passed / (x.scored || 1));
-    return { items: out, scanned: UNIVERSE.length, failed, at: Date.now() };
+    }),
+  );
+  return [...new Set([...BASE_UNIVERSE, ...extra])];
+}
+
+const validUniverseSymbol = (s: string) => /^[A-Z0-9.\-]{1,12}$/.test(s);
+
+/**
+ * Revisión en tres pasos para abarcar muchos valores con pocas peticiones:
+ * 1) cotización en bloque de todo el universo y filtro previo barato,
+ * 2) histórico diario de los candidatos para confirmar la señal,
+ * 3) análisis completo (fundamentales y dividendos) de los mejores.
+ */
+export function getOpportunities(): Promise<Scan> {
+  return cached("opps", 60 * MIN, async () => {
+    const universe = await loadUniverse();
+    let failed = 0;
+
+    // Paso 1: cotizaciones en bloques de 50.
+    const candidates: string[] = [];
+    let scanned = 0;
+    const chunks: string[][] = [];
+    for (let i = 0; i < universe.length; i += 50) chunks.push(universe.slice(i, i + 50));
+    await pool(chunks, 3, async (chunk) => {
+      try {
+        const rows = await yf.quote(chunk);
+        for (const r of rows) {
+          const p = n(r.regularMarketPrice);
+          const m50 = n(r.fiftyDayAverage);
+          const m200 = n(r.twoHundredDayAverage);
+          const hi = n(r.fiftyTwoWeekHigh);
+          if (r.quoteType !== "EQUITY" || p === null || m50 === null || m200 === null) continue;
+          scanned++;
+          const trend = p > m50 && m50 > m200;
+          const dropped = p < m50 * 0.92;
+          const nearHigh = hi !== null && p >= hi * 0.985;
+          if (trend || dropped || nearHigh) candidates.push(r.symbol);
+        }
+      } catch {
+        failed += chunk.length;
+      }
+    });
+
+    // Paso 2: histórico de los candidatos para confirmar la señal.
+    const signals: { symbol: string; kind: Signal["kind"]; momentum: number }[] = [];
+    await pool(candidates, 6, async (sym) => {
+      try {
+        const bars = await getDailyBars(sym);
+        const signal = detectSignal(bars);
+        const t = technicals(bars);
+        if (signal && t && t.sma200) signals.push({ symbol: sym, kind: signal.kind, momentum: t.price / t.sma200 });
+      } catch {
+        failed++;
+      }
+    });
+    signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
+
+    // Paso 3: análisis completo de los mejores.
+    const out: Opportunity[] = [];
+    await pool(signals.slice(0, DEEP_LIMIT), 5, async ({ symbol }) => {
+      try {
+        const a = await getAnalysis(symbol);
+        const t = a.technicals;
+        if (!a.signal || !t || a.price === null || t.atr === null) return;
+        const stop = a.price - 2 * t.atr;
+        const growth = a.checks.groups[0].items[0];
+        out.push({
+          symbol: a.symbol,
+          name: a.name,
+          currency: a.currency,
+          signal: a.signal,
+          rsi: t.rsi,
+          revenueGrowth: growth.status === "na" ? "Sin datos" : growth.value,
+          passed: a.checks.passed,
+          scored: a.checks.scored,
+          entry: a.price,
+          stop,
+          target: a.price + 2 * (a.price - stop),
+          earningsSoon: a.keyData.nextEarnings !== null && a.keyData.nextEarnings > Date.now() && a.keyData.nextEarnings - Date.now() < 10 * 86_400_000,
+        });
+      } catch {
+        failed++;
+      }
+    });
+    out.sort((x, y) => y.passed / (y.scored || 1) - x.passed / (x.scored || 1) || y.scored - x.scored);
+    return { items: out, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
 }

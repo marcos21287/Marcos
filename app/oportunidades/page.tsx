@@ -5,7 +5,7 @@ import { positionSize } from "@/lib/checks";
 import { money, parseNumber, timeAgo } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import { useFetch } from "@/lib/useFetch";
-import type { Opportunity } from "@/lib/yahoo";
+import type { Scan } from "@/lib/yahoo";
 
 const FILTERS = ["Todas", "Ruptura", "Tendencia", "Sobreventa"] as const;
 
@@ -13,7 +13,7 @@ export default function Oportunidades() {
   const [state, update] = useStore();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Todas");
   const [capitalText, setCapitalText] = useState<string | null>(null);
-  const { data, error, loading } = useFetch<{ items: Opportunity[]; scanned: number; failed: number; at: number }>("/api/opportunities");
+  const { data, error, loading } = useFetch<Scan>("/api/opportunities");
   const rows = (data?.items ?? []).filter((o) => filter === "Todas" || o.signal.kind === filter);
   const setCapital = (text: string) => {
     setCapitalText(text);
@@ -27,8 +27,9 @@ export default function Oportunidades() {
         <div>
           <h1>Oportunidades</h1>
           <p className="muted">
-            Vigía revisa sola {data ? data.scanned : "sus"} valores: muestra los que hoy cumplen una señal, su chequeo de fundamentales y el
-            tamaño de posición para tu capital.
+            {data
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y aquí están los ${data.items.length} mejores, con su chequeo de fundamentales y el tamaño de posición para tu capital.`
+              : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
         {data && <span className="tag">Actualizado {timeAgo(data.at)}</span>}
@@ -67,7 +68,7 @@ export default function Oportunidades() {
         ))}
       </div>
 
-      {loading && <p className="card empty">Analizando el mercado… la primera vez tarda unos segundos.</p>}
+      {loading && <p className="card empty">Analizando cientos de valores… la primera vez puede tardar cerca de un minuto.</p>}
       {error && <p className="error">{error}</p>}
       {data && rows.length === 0 && <p className="card empty">Hoy no hay valores con esta señal.</p>}
       {data && data.failed > 0 && <p className="muted small">No se pudieron analizar {data.failed} valores.</p>}
