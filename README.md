@@ -29,6 +29,15 @@ npm test         # pruebas de la lógica
 npm run build && npm start
 ```
 
+## Publicar gratis en Vercel
+
+1. Entra en https://vercel.com con tu cuenta de GitHub.
+2. «Add New… → Project», elige el repositorio `Marcos` y pulsa «Deploy» sin cambiar nada.
+3. Cada vez que se suba código al repositorio, Vercel vuelve a publicar la app.
+
+La red de Vercel guarda las respuestas (una hora la lista de oportunidades, 30 segundos los precios) para no
+repetir peticiones a Yahoo en cada visita.
+
 ## Costes
 
 Las ganancias se muestran en euros al cambio actual y descuentan comisión por orden, cambio de divisa e impuestos.

@@ -6,5 +6,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ symb
   const symbol = decodeURIComponent((await params).symbol);
   const range = (req.nextUrl.searchParams.get("range") ?? "1M") as Range;
   if (!validSymbol(symbol) || !RANGES.includes(range)) return NextResponse.json({ error: "Petición no válida" }, { status: 400 });
-  return json(() => getHistory(symbol.toUpperCase(), range));
+  return json(() => getHistory(symbol.toUpperCase(), range), 120);
 }

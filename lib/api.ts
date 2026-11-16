@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 
-/** Ejecuta una carga de datos y devuelve JSON, o un error 502 legible si falla la fuente. */
-export async function json<T>(load: () => Promise<T>) {
+/**
+ * Ejecuta una carga de datos y devuelve JSON, o un error 502 legible si falla la fuente.
+ * `cdnSeconds` deja que la red del alojamiento guarde la respuesta correcta ese tiempo, para
+ * no repetir las peticiones a Yahoo en cada visita (los errores nunca se guardan).
+ */
+export async function json<T>(load: () => Promise<T>, cdnSeconds = 0) {
   try {
-    return NextResponse.json(await load());
+    const headers = cdnSeconds ? { "Cache-Control": `public, s-maxage=${cdnSeconds}, stale-while-revalidate=${cdnSeconds * 4}` } : undefined;
+    return NextResponse.json(await load(), { headers });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";
     return NextResponse.json({ error: `No se pudieron obtener los datos de Yahoo Finance: ${message}` }, { status: 502 });

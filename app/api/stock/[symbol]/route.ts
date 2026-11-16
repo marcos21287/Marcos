@@ -10,5 +10,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ symb
     const analysis = await getAnalysis(symbol);
     const news = withNews ? await getStockNews(analysis.symbol, [analysis.shortName, analysis.name]).catch(() => []) : [];
     return { ...analysis, news };
-  });
+  }, 600);
 }
