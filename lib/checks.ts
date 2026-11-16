@@ -42,6 +42,17 @@ export interface CheckInput {
   sma50: number | null;
   sma200: number | null;
   rsi: number | null;
+  /** PER del sector (de su fondo cotizado), si se conoce. */
+  sectorPe: number | null;
+  /** Precio objetivo medio de los analistas respecto al precio actual (0,1 = +10 %). */
+  targetUpside: number | null;
+  /** Recomendación media: 1 = compra fuerte, 5 = venta. */
+  recommendation: number | null;
+  analysts: number | null;
+  /** Posiciones cortas como fracción de las acciones en circulación libre. */
+  shortPct: number | null;
+  /** Compras netas de directivos en 6 meses, como fracción de sus acciones. */
+  insiderNet: number | null;
 }
 
 const pct = (v: number, d = 1) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(d).replace(".", ",")} %`;
@@ -65,6 +76,7 @@ function notApplicable(id: string, label: string, rule: string): Check {
 }
 
 export function runChecks(i: CheckInput): CheckResult {
+  const enoughAnalysts = i.analysts !== null && i.analysts >= 3;
   const bankNote = "No aplica a bancos: su negocio es la deuda y no tienen EBITDA comparable.";
   const groups: CheckGroup[] = [
     {
@@ -101,7 +113,9 @@ export function runChecks(i: CheckInput): CheckResult {
     {
       name: "Valoración",
       items: [
-        check("pe", "PER", "Criterio: entre 0 y 25", i.pe, (v) => num(v), (v) => v > 0 && v < 25),
+        i.sectorPe !== null && i.sectorPe > 0
+          ? check("pe", "PER frente a su sector", `Criterio: positivo y no más de un 20 % sobre el del sector (${num(i.sectorPe)})`, i.pe, (v) => num(v), (v) => v > 0 && v < (i.sectorPe as number) * 1.2)
+          : check("pe", "PER", "Criterio: entre 0 y 25", i.pe, (v) => num(v), (v) => v > 0 && v < 25),
         i.isBank
           ? check("pb", "Precio / valor contable", "Criterio para bancos: menos de 1,5", i.priceToBook, (v) => num(v, 2), (v) => v > 0 && v < 1.5)
           : check("evEbitda", "EV / EBITDA", "Criterio: menos de 12", i.evToEbitda, (v) => num(v), (v) => v > 0 && v < 12),
@@ -135,6 +149,15 @@ export function runChecks(i: CheckInput): CheckResult {
           (v) => v > 0,
         ),
         check("rsi", "RSI (14)", "Criterio: entre 30 y 70", i.rsi, (v) => String(Math.round(v)), (v) => v >= 30 && v <= 70),
+      ],
+    },
+    {
+      name: "Analistas y mercado",
+      items: [
+        check("target", "Precio objetivo de los analistas", "Criterio: al menos un 5 % por encima del precio, con 3 analistas o más", enoughAnalysts ? i.targetUpside : null, (v) => `${pct(v)} sobre el precio`, (v) => v >= 0.05),
+        check("recommendation", "Recomendación media", "Criterio: 2,5 o menos (1 = comprar, 5 = vender)", enoughAnalysts ? i.recommendation : null, (v) => num(v), (v) => v <= 2.5),
+        check("short", "Posiciones cortas", "Criterio: menos del 10 % de las acciones apuestan a la baja", i.shortPct, plainPct, (v) => v < 0.1),
+        check("insiders", "Directivos, últimos 6 meses", "Criterio: no venden más de lo que compran", i.insiderNet, (v) => (v >= 0 ? "Compras netas" : "Ventas netas"), (v) => v >= 0),
       ],
     },
   ];
@@ -224,6 +247,9 @@ export interface ContextInput {
   macroYear: string | null;
   sectorName: string | null;
   sector: MarketStat;
+  /** Divisa de la acción y cuánto ha subido el euro frente a ella en 3 meses (0,03 = +3 %). */
+  currency: string | null;
+  euroChange3m: number | null;
 }
 
 export interface ContextResult {
@@ -267,6 +293,9 @@ export function runContextChecks(i: ContextInput): ContextResult {
           () => plainPct((i.unemployment ?? 0) / 100),
           (v) => v <= 0.1,
         ),
+        !i.currency || i.currency === "EUR"
+          ? notApplicable("fx", "Divisa frente al euro", "Cotiza en euros: sin riesgo de cambio.")
+          : check("fx", `Divisa (${i.currency}) frente al euro, 3 meses`, "Criterio: no pierde más de un 3 % frente al euro", i.euroChange3m, (v) => pct(-v), (v) => v <= 0.03),
       ],
     },
     {

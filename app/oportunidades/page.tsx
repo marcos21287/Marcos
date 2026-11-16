@@ -6,6 +6,7 @@ import { money, parseNonNegative, parseNumber, plain, signedMoney, signedPct, ti
 import { newId, useStore, type State } from "@/lib/store";
 import { costsOf, fxRate, fxSymbol, MAX_OPEN_RISK_PCT, summary } from "@/lib/trades";
 import { useFetch } from "@/lib/useFetch";
+import type { SignalStats } from "@/lib/indicators";
 import type { Quote, Scan } from "@/lib/yahoo";
 import { Change } from "@/components/Change";
 
@@ -49,11 +50,15 @@ export default function Oportunidades() {
           <h1>Las 10 mejores oportunidades</h1>
           <p className="muted">
             {data
-              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector). Se han descartado ${data.excluded} por tener ingresos a la baja o pérdidas.`
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector).`
               : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
-        {data && <span className="tag">Actualizado {timeAgo(data.at)}</span>}
+        {data && (
+          <span className={`tag ${data.regime === "alcista" ? "green" : data.regime === "bajista" ? "orange" : ""}`}>
+            {data.regime ? `Bolsa mundial ${data.regime} · ` : ""}actualizado {timeAgo(data.at)}
+          </span>
+        )}
       </div>
 
       <section aria-label="Tu plan" className="card pad plan">
@@ -97,6 +102,14 @@ export default function Oportunidades() {
         </p>
       </section>
 
+      {data && (
+        <p className="muted small">
+          Fuera de la lista por requisitos imprescindibles: {data.excluded} de {data.analyzed} analizadas ({data.excludedBy.ingresos} por ingresos a
+          la baja, {data.excludedBy.perdidas} en pérdidas, {data.excludedBy.deuda} con deuda neta superior a 4 veces el EBITDA,{" "}
+          {data.excludedBy.valoracion} con PER por encima de 50 y {data.excludedBy.resultados} que publican resultados en los próximos 7 días).
+          Además, {data.illiquid} valores no se revisan por negociar menos de 5 millones al día.
+        </p>
+      )}
       {loading && <p className="card empty">Analizando cientos de valores… la primera vez puede tardar cerca de un minuto.</p>}
       {error && <p className="error">{error}</p>}
       {data && rows.length === 0 && <p className="card empty">Hoy ningún valor cumple una señal.</p>}
@@ -122,6 +135,7 @@ export default function Oportunidades() {
               trades: [
                 {
                   id: newId(), symbol: o.symbol, name: o.name, currency: o.currency, sector: o.sector, signal: o.signal.kind,
+                  score: o.totalScored ? o.totalPassed / o.totalScored : null,
                   shares: size.shares, entry: live.get(o.symbol)?.price ?? o.entry, stop: o.stop, target: o.target, rate: r,
                   openedAt: Date.now(), expected: expectedGross, status: "open",
                 },
@@ -191,18 +205,28 @@ export default function Oportunidades() {
           <div>
             <h2>Qué puedes esperar: el histórico de cada señal</h2>
             <p className="muted">
-              Vigía ha simulado cada señal en los {data.scanned} valores durante algo más de un año: comprar al aparecer la señal, stop a 2 veces
-              el rango medio diario (ATR), objetivo a 4 veces y salida a las 40 sesiones si no toca ninguno.
+              Vigía ha simulado cada señal en los {data.scanned} valores durante unos cuatro años y medio, caída de 2022 incluida: comprar al
+              aparecer la señal, stop a 2 veces el rango medio diario (ATR), objetivo a 4 veces y salida a las 40 sesiones si no toca ninguno.
+              El resultado se separa según la bolsa mundial estuviera alcista o bajista al entrar; las tarjetas usan el de la situación actual
+              {data.regime ? ` (${data.regime})` : ""}.
             </p>
           </div>
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Señal</th><th>Operaciones</th><th>Llegan al objetivo</th><th>Tardan en llegar</th><th>Duración media</th><th>Resultado medio</th></tr>
+                <tr><th>Señal</th><th>Operaciones</th><th>Llegan al objetivo</th><th>Duración media</th><th>Resultado medio</th><th>Con bolsa alcista</th><th>Con bolsa bajista</th></tr>
               </thead>
               <tbody>
                 {KINDS.map((k) => {
-                  const st = data.stats[k];
+                  const st = data.stats.all[k];
+                  const cell = (x: SignalStats | null) =>
+                    x ? (
+                      <td className={x.avgR < 0 ? "down-text" : "up-text"}>
+                        {x.avgR >= 0 ? "+" : "−"}{plain(Math.abs(x.avgR), 2)} R <span className="muted small">({Math.round(x.winRate * 100)} % · {x.trades.toLocaleString("es-ES")})</span>
+                      </td>
+                    ) : (
+                      <td>—</td>
+                    );
                   return (
                     <tr key={k}>
                       <th scope="row">{k}</th>
@@ -210,12 +234,13 @@ export default function Oportunidades() {
                         <>
                           <td>{st.trades.toLocaleString("es-ES")}</td>
                           <td>{Math.round(st.winRate * 100)} %</td>
-                          <td>{weeks(st.avgDaysToTarget)}</td>
                           <td>{weeks(st.avgDays)}</td>
-                          <td className={st.avgR < 0 ? "down-text" : "up-text"}>{st.avgR >= 0 ? "+" : "−"}{plain(Math.abs(st.avgR), 2)} veces el riesgo</td>
+                          <td className={st.avgR < 0 ? "down-text" : "up-text"}>{st.avgR >= 0 ? "+" : "−"}{plain(Math.abs(st.avgR), 2)} R</td>
+                          {cell(data.stats.bull[k])}
+                          {cell(data.stats.bear[k])}
                         </>
                       ) : (
-                        <td colSpan={5}>Sin operaciones en el periodo</td>
+                        <td colSpan={6}>Sin operaciones en el periodo</td>
                       )}
                     </tr>
                   );
@@ -223,6 +248,10 @@ export default function Oportunidades() {
               </tbody>
             </table>
           </div>
+          <p className="muted small">
+            R = veces lo arriesgado: +0,20 R significa ganar de media 0,20 € por cada euro arriesgado. Entre paréntesis, el porcentaje que llega
+            al objetivo y el número de operaciones.
+          </p>
           <p className="muted small">
             «Resultado medio esperado» de cada tarjeta = resultado medio histórico de su señal × lo que arriesgas en esa acción. Es una media
             de muchas operaciones pasadas, sin comisiones ni impuestos: una operación concreta acaba en el stop, en el objetivo o entre medias,

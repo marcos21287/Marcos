@@ -29,6 +29,8 @@ export interface PaperTrade {
   currency: string;
   sector: string | null;
   signal: string;
+  /** Nota total al abrir, como fracción de controles cumplidos. */
+  score?: number | null;
   shares: number;
   entry: number;
   stop: number;

@@ -2,7 +2,7 @@
 import YahooFinance from "yahoo-finance2";
 import { cagr, runChecks, runContextChecks, yearsWithoutCut, type CheckResult, type ContextResult, type MarketStat } from "./checks";
 import { COUNTRIES, SECTORS, WB_INDICATORS } from "./context";
-import { backtest, detectSignal, summarize, technicals, STOP_ATR, TARGET_ATR, type Bar, type Signal, type SignalStats, type Technicals, type Trade } from "./indicators";
+import { backtest, detectSignal, summarizeByRegime, technicals, STOP_ATR, TARGET_ATR, type Bar, type RegimeStats, type Signal, type Technicals, type Trade } from "./indicators";
 import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -100,13 +100,18 @@ export function getHistory(symbol: string, range: Range): Promise<Point[]> {
   });
 }
 
+/** Unos cinco años y medio de sesiones diarias: suficiente para incluir la caída de 2022. */
+const HISTORY_DAYS = 2000;
+
+async function fetchDailyBars(symbol: string): Promise<Bar[]> {
+  const res = await yf.chart(symbol, { period1: daysAgo(HISTORY_DAYS), interval: "1d" });
+  return res.quotes
+    .filter((q) => n(q.close) !== null && n(q.high) !== null && n(q.low) !== null)
+    .map((q) => ({ t: q.date.getTime(), high: q.high as number, low: q.low as number, close: q.close as number, volume: q.volume ?? 0 }));
+}
+
 function getDailyBars(symbol: string): Promise<Bar[]> {
-  return cached(`bars:${symbol}`, 15 * MIN, async () => {
-    const res = await yf.chart(symbol, { period1: daysAgo(800), interval: "1d" });
-    return res.quotes
-      .filter((q) => n(q.close) !== null && n(q.high) !== null && n(q.low) !== null)
-      .map((q) => ({ high: q.high as number, low: q.low as number, close: q.close as number, volume: q.volume ?? 0 }));
-  });
+  return cached(`bars:${symbol}`, 15 * MIN, () => fetchDailyBars(symbol));
 }
 
 function getDividends(symbol: string): Promise<{ date: Date; amount: number }[]> {
@@ -198,16 +203,18 @@ export interface Context extends ContextResult {
 }
 
 /** Entorno de una acción: macro global, su país y su sector. */
-export async function getContext(country: string | null, sector: string | null): Promise<Context> {
+export async function getContext(country: string | null, sector: string | null, currency: string | null = null): Promise<Context> {
   const c = country ? COUNTRIES[country] : undefined;
   const sec = sector ? SECTORS[sector] : undefined;
-  const [world, vix, tnx, idx, etf, macro] = await Promise.all([
+  const fxPair = currency && currency !== "EUR" ? `EUR${currency === "GBp" ? "GBP" : currency}=X` : null;
+  const [world, vix, tnx, idx, etf, macro, fx] = await Promise.all([
     marketStat("^GSPC"),
     marketStat("^VIX"),
     marketStat("^TNX"),
     c ? marketStat(c.index) : Promise.resolve({ ...NO_STAT, last: null, ago3m: null }),
     sec ? marketStat(sec.etf) : Promise.resolve({ ...NO_STAT, last: null, ago3m: null }),
     getMacro().catch(() => ({}) as Record<string, CountryMacro>),
+    fxPair ? marketStat(fxPair) : Promise.resolve({ ...NO_STAT, last: null, ago3m: null }),
   ]);
   const m = c ? macro[c.iso] : undefined;
   const result = runContextChecks({
@@ -223,8 +230,20 @@ export async function getContext(country: string | null, sector: string | null):
     macroYear: m?.year ?? null,
     sectorName: sec?.name ?? sector,
     sector: etf,
+    currency,
+    euroChange3m: fx.return3m,
   });
   return { ...result, country: c?.name ?? country, sector: sec?.name ?? sector };
+}
+
+/** PER del sector, tomado de su fondo cotizado. */
+function getSectorPe(sector: string | null): Promise<number | null> {
+  const etf = sector ? SECTORS[sector]?.etf : undefined;
+  if (!etf) return Promise.resolve(null);
+  return cached(`pe:${etf}`, 12 * 60 * MIN, async () => {
+    const q = await yf.quote(etf);
+    return n((q as { trailingPE?: number }).trailingPE);
+  }).catch(() => null);
 }
 
 export interface Analysis {
@@ -254,6 +273,8 @@ export interface Analysis {
     nextEarnings: number | null;
   };
   yearly: { year: number; revenue: number; earnings: number }[];
+  /** Deuda neta dividida por EBITDA (null en bancos o sin datos). */
+  netDebtToEbitda: number | null;
   financialCurrency: string | null;
   technicals: Technicals | null;
   signal: Signal | null;
@@ -268,7 +289,7 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
   return cached(`a:${sym}`, 15 * MIN, async () => {
     const [summary, bars, dividends] = await Promise.all([
       yf.quoteSummary(sym, {
-        modules: ["price", "financialData", "defaultKeyStatistics", "summaryDetail", "assetProfile", "earnings", "calendarEvents"],
+        modules: ["price", "financialData", "defaultKeyStatistics", "summaryDetail", "assetProfile", "earnings", "calendarEvents", "netSharePurchaseActivity"],
       }),
       getDailyBars(sym).catch(() => [] as Bar[]),
       getDividends(sym).catch(() => []),
@@ -289,7 +310,10 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
     const debt = n(fd?.totalDebt);
     const cash = n(fd?.totalCash);
     const dividendYield = n(sd?.trailingAnnualDividendYield) ?? n(sd?.dividendYield);
-    const context = await getContext(profile?.country ?? null, profile?.sector ?? null);
+    const currency = pr?.currency ?? sd?.currency ?? null;
+    const [context, sectorPe] = await Promise.all([getContext(profile?.country ?? null, profile?.sector ?? null, currency), getSectorPe(profile?.sector ?? null)]);
+    const target = n(fd?.targetMeanPrice);
+    const insiders = summary.netSharePurchaseActivity as { netPercentInsiderShares?: number } | undefined;
     const earningsDate = summary.calendarEvents?.earnings?.earningsDate?.[0];
     const checks = runChecks({
       isBank,
@@ -311,6 +335,12 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
       sma50: tech?.sma50 ?? null,
       sma200: tech?.sma200 ?? null,
       rsi: tech?.rsi ?? null,
+      sectorPe,
+      targetUpside: target !== null && price ? target / price - 1 : null,
+      recommendation: n(fd?.recommendationMean),
+      analysts: n(fd?.numberOfAnalystOpinions),
+      shortPct: n(ks?.shortPercentOfFloat),
+      insiderNet: n(insiders?.netPercentInsiderShares),
     });
     return {
       symbol: sym,
@@ -339,6 +369,7 @@ export function getAnalysis(symbol: string): Promise<Analysis> {
         nextEarnings: earningsDate ? new Date(earningsDate).getTime() : null,
       },
       yearly,
+      netDebtToEbitda: !isBank && ebitda && ebitda > 0 && debt !== null && cash !== null ? (debt - cash) / ebitda : null,
       financialCurrency: fd?.financialCurrency ?? null,
       technicals: tech,
       signal: detectSignal(bars),
@@ -406,14 +437,60 @@ export interface Scan {
   withSignal: number;
   /** Valores con análisis completo, de los que salen los 10 mejores. */
   analyzed: number;
-  /** Descartados por ingresos a la baja o pérdidas. */
+  /** Descartados por no cumplir un requisito imprescindible, en total y por motivo. */
   excluded: number;
-  /** Qué pasó históricamente al seguir cada señal en todos los valores revisados. */
-  stats: Record<Signal["kind"], SignalStats | null>;
+  excludedBy: Record<ExcludeReason, number>;
+  /** Valores sin cotización suficiente (menos de 5 millones negociados al día). */
+  illiquid: number;
+  /** Qué pasó históricamente al seguir cada señal, en total y según la bolsa estuviera alcista o bajista. */
+  stats: RegimeStats;
+  /** Situación actual de la bolsa mundial (S&P 500 frente a su media de 200 sesiones). */
+  regime: "alcista" | "bajista" | null;
   failed: number;
   at: number;
 }
 
+export type ExcludeReason = "ingresos" | "perdidas" | "deuda" | "valoracion" | "resultados";
+
+/** Requisitos imprescindibles: devuelve el motivo por el que una empresa queda fuera, o null si pasa. */
+function excludeReason(a: Analysis): ExcludeReason | null {
+  const revenueTrend = cagr(a.yearly.map((y) => y.revenue));
+  if (revenueTrend !== null && revenueTrend < 0) return "ingresos";
+  const lastEarnings = a.yearly.length ? a.yearly[a.yearly.length - 1].earnings : null;
+  if (lastEarnings !== null && Number.isFinite(lastEarnings) && lastEarnings <= 0) return "perdidas";
+  if (a.netDebtToEbitda !== null && a.netDebtToEbitda > 4) return "deuda";
+  if (a.keyData.pe !== null && a.keyData.pe > 50) return "valoracion";
+  const e = a.keyData.nextEarnings;
+  if (e !== null && e > Date.now() - 86_400_000 && e - Date.now() < 7 * 86_400_000) return "resultados";
+  return null;
+}
+
+/** Función que dice si, en una fecha, el S&P 500 estaba por encima de su media de 200 sesiones. */
+async function marketRegime(): Promise<{ at: (t: number) => boolean | null; now: boolean | null }> {
+  const bars = await getDailyBars("^GSPC").catch(() => [] as Bar[]);
+  const byDay = new Map<string, boolean>();
+  let sum = 0;
+  let last: boolean | null = null;
+  bars.forEach((b, i) => {
+    sum += b.close;
+    if (i >= 200) sum -= bars[i - 200].close;
+    if (i >= 199 && b.t !== undefined) {
+      last = b.close > sum / 200;
+      byDay.set(new Date(b.t).toISOString().slice(0, 10), last);
+    }
+  });
+  const at = (t: number) => {
+    for (let back = 0; back < 6; back++) {
+      const hit = byDay.get(new Date(t - back * 86_400_000).toISOString().slice(0, 10));
+      if (hit !== undefined) return hit;
+    }
+    return null;
+  };
+  return { at, now: last };
+}
+
+/** Volumen mínimo negociado al día, en la divisa de la acción. */
+const MIN_DAILY_VALUE = 5_000_000;
 const DEEP_LIMIT = 80;
 const TOP = 10;
 /** Para no concentrar las 10 en un solo sector, como mucho 3 de cada uno. */
@@ -472,6 +549,8 @@ export function getOpportunities(): Promise<Scan> {
     const candidates: string[] = [];
     const quoted: string[] = [];
     let scanned = 0;
+    let illiquid = 0;
+    const regime = await marketRegime();
     const chunks: string[][] = [];
     for (let i = 0; i < universe.length; i += 50) chunks.push(universe.slice(i, i + 50));
     await pool(chunks, 3, async (chunk) => {
@@ -483,6 +562,12 @@ export function getOpportunities(): Promise<Scan> {
           const m200 = n(r.twoHundredDayAverage);
           const hi = n(r.fiftyTwoWeekHigh);
           if (r.quoteType !== "EQUITY" || p === null || m50 === null || m200 === null) continue;
+          const avgVolume = n(r.averageDailyVolume3Month);
+          const traded = avgVolume === null ? null : (avgVolume * p) / (r.currency === "GBp" ? 100 : 1);
+          if (traded !== null && traded < MIN_DAILY_VALUE) {
+            illiquid++;
+            continue;
+          }
           scanned++;
           quoted.push(r.symbol);
           const trend = p > m50 && m50 > m200;
@@ -500,40 +585,45 @@ export function getOpportunities(): Promise<Scan> {
     const signals: { symbol: string; kind: Signal["kind"]; momentum: number }[] = [];
     const trades: Trade[] = [];
     const isCandidate = new Set(candidates);
-    await pool(quoted, 8, async (sym) => {
+    await pool(quoted, 12, async (sym) => {
       try {
-        const bars = await getDailyBars(sym);
-        trades.push(...backtest(bars));
+        const bars = await fetchDailyBars(sym);
+        trades.push(...backtest(bars, regime.at));
         if (!isCandidate.has(sym)) return;
         const signal = detectSignal(bars);
         const t = technicals(bars);
-        if (signal && t && t.sma200) signals.push({ symbol: sym, kind: signal.kind, momentum: t.price / t.sma200 });
+        if (signal && t && t.sma200) {
+          signals.push({ symbol: sym, kind: signal.kind, momentum: t.price / t.sma200 });
+          // Se guarda el histórico solo de los valores con señal, que son los que se analizan a fondo.
+          cache.set(`bars:${sym}`, { expires: Date.now() + 15 * MIN, value: Promise.resolve(bars) });
+        }
       } catch {
         failed++;
       }
     });
-    const stats = summarize(trades);
+    const stats = summarizeByRegime(trades);
+    const current = regime.now === null ? stats.all : regime.now ? stats.bull : stats.bear;
     signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
 
     // Paso 3: análisis completo de los mejores.
     const out: Opportunity[] = [];
     let excluded = 0;
+    const excludedBy: Record<ExcludeReason, number> = { ingresos: 0, perdidas: 0, deuda: 0, valoracion: 0, resultados: 0 };
     await pool(signals.slice(0, DEEP_LIMIT), 5, async ({ symbol }) => {
       try {
         const a = await getAnalysis(symbol);
         const t = a.technicals;
         if (!a.signal || !t || a.price === null || t.atr === null) return;
-        // Requisitos imprescindibles: fuera las empresas con ingresos a la baja o en pérdidas.
-        const revenueTrend = cagr(a.yearly.map((y) => y.revenue));
-        const lastEarnings = a.yearly.length ? a.yearly[a.yearly.length - 1].earnings : null;
-        if ((revenueTrend !== null && revenueTrend < 0) || (lastEarnings !== null && Number.isFinite(lastEarnings) && lastEarnings <= 0)) {
+        const reason = excludeReason(a);
+        if (reason) {
           excluded++;
+          excludedBy[reason]++;
           return;
         }
         const stop = a.price - STOP_ATR * t.atr;
         const target = a.price + TARGET_ATR * t.atr;
         const lossPct = ((a.price - stop) / a.price) * 100;
-        const st = stats[a.signal.kind];
+        const st = current[a.signal.kind] ?? stats.all[a.signal.kind];
         const growth = a.checks.groups[0].items[0];
         out.push({
           symbol: a.symbol,
@@ -570,6 +660,6 @@ export function getOpportunities(): Promise<Scan> {
       .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
       .filter(limitPerSector(MAX_PER_SECTOR))
       .slice(0, TOP);
-    return { items: ranked, stats, excluded, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
+    return { items: ranked, stats, regime: regime.now === null ? null : regime.now ? "alcista" : "bajista", excluded, excludedBy, illiquid, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
 }

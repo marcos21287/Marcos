@@ -7,6 +7,12 @@ import { useFetch } from "@/lib/useFetch";
 import type { Quote } from "@/lib/yahoo";
 
 const REASONS = { objetivo: "Llegó al objetivo", stop: "Saltó el stop", plazo: "Fin del plazo", manual: "Cierre manual" } as const;
+const BANDS: { label: string; test: (s: number | null) => boolean }[] = [
+  { label: "85 % o más de controles cumplidos", test: (s) => s !== null && s >= 0.85 },
+  { label: "Entre 75 % y 85 %", test: (s) => s !== null && s >= 0.75 && s < 0.85 },
+  { label: "Menos del 75 %", test: (s) => s !== null && s < 0.75 },
+  { label: "Sin nota registrada", test: (s) => s === null },
+];
 const day = (t: number) => new Date(t).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 const tone = (v: number) => (v >= 0 ? "up-text" : "down-text");
 
@@ -141,6 +147,37 @@ export default function Diario() {
           </div>
         )}
       </section>
+
+      {book.closed.length > 0 && (
+        <section className="card pad">
+          <div>
+            <h2>¿Aciertan más las notas altas?</h2>
+            <p className="muted">Resultado de las operaciones cerradas según la nota que tenían al abrirlas. Con pocas operaciones no significa nada todavía.</p>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Nota al abrir</th><th>Operaciones</th><th>Con ganancia</th><th>Resultado total</th></tr>
+              </thead>
+              <tbody>
+                {BANDS.map((band) => {
+                  const list = book.closed.filter((t) => band.test(t.score ?? null));
+                  const nets = list.map((t) => tradeResult(t, t.exit ?? t.entry, costs).net);
+                  const total = nets.reduce((x, y) => x + y, 0);
+                  return (
+                    <tr key={band.label}>
+                      <th scope="row">{band.label}</th>
+                      <td>{list.length}</td>
+                      <td>{list.length ? `${nets.filter((x) => x > 0).length} (${Math.round((nets.filter((x) => x > 0).length / list.length) * 100)} %)` : "—"}</td>
+                      <td className={list.length ? tone(total) : ""}>{list.length ? signedMoney(total) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <p className="muted small">
         Resultados en euros al cambio del día de la compra, con {money(costs.commission, "EUR")} de comisión por orden y {plain(costs.fxPct)} % de

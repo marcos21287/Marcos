@@ -47,6 +47,8 @@ export function macd(closes: number[]): { macd: number; signal: number; hist: nu
 }
 
 export interface Bar {
+  /** Fecha de la sesión (milisegundos). */
+  t?: number;
   high: number;
   low: number;
   close: number;
@@ -113,24 +115,32 @@ export interface Signal {
   why: string;
 }
 
+/** Regla común de las señales, usada tanto para hoy como en la prueba histórica. */
+export function classify(
+  price: number,
+  priorHigh: number | null,
+  volumeRatio: number | null,
+  rsiValue: number | null,
+  sma50: number | null,
+  sma200: number | null,
+): SignalKind | null {
+  if (priorHigh !== null && price > priorHigh && volumeRatio !== null && volumeRatio >= 1.3) return "Ruptura";
+  if (rsiValue !== null && rsiValue < 30) return "Sobreventa";
+  if (sma50 !== null && sma200 !== null && price > sma50 && sma50 > sma200 && rsiValue !== null && rsiValue < 70) return "Tendencia";
+  return null;
+}
+
 /** Detecta la señal más relevante del día, o null si no hay ninguna. */
 export function detectSignal(bars: Bar[]): Signal | null {
   const t = technicals(bars);
   if (!t || bars.length < 64) return null;
-  const prior = bars.slice(-64, -1);
-  const priorHigh = Math.max(...prior.map((b) => b.high));
-  if (t.price > priorHigh && t.volumeRatio !== null && t.volumeRatio >= 1.3) {
-    return {
-      kind: "Ruptura",
-      why: `Supera el máximo de 3 meses con un volumen ${t.volumeRatio.toFixed(1).replace(".", ",")} veces superior a la media.`,
-    };
+  const priorHigh = Math.max(...bars.slice(-64, -1).map((b) => b.high));
+  const kind = classify(t.price, priorHigh, t.volumeRatio, t.rsi, t.sma50, t.sma200);
+  if (kind === "Ruptura") {
+    return { kind, why: `Supera el máximo de 3 meses con un volumen ${(t.volumeRatio ?? 0).toFixed(1).replace(".", ",")} veces superior a la media.` };
   }
-  if (t.rsi !== null && t.rsi < 30) {
-    return { kind: "Sobreventa", why: `RSI en ${Math.round(t.rsi)}, por debajo de 30: caída fuerte que puede rebotar.` };
-  }
-  if (t.trend === "alcista" && t.rsi !== null && t.rsi < 70) {
-    return { kind: "Tendencia", why: "Precio por encima de las medias de 50 y 200 sesiones, sin sobrecompra." };
-  }
+  if (kind === "Sobreventa") return { kind, why: `RSI en ${Math.round(t.rsi ?? 0)}, por debajo de 30: caída fuerte que puede rebotar.` };
+  if (kind === "Tendencia") return { kind, why: "Precio por encima de las medias de 50 y 200 sesiones, sin sobrecompra." };
   return null;
 }
 
@@ -143,47 +153,94 @@ export interface Trade {
   /** Sesiones que duró la operación. */
   days: number;
   won: boolean;
+  /** Si la bolsa mundial estaba en tendencia alcista al entrar (null si no se sabe). */
+  bull: boolean | null;
 }
 
 export const STOP_ATR = 2;
 export const TARGET_ATR = 4;
 export const MAX_HOLD = 40;
 
+/** Indicadores de cada día calculados de una pasada, para recorrer años de histórico sin repetir cuentas. */
+function dailySeries(bars: Bar[]) {
+  const n = bars.length;
+  const nul = () => new Array<number | null>(n).fill(null);
+  const s50 = nul(), s200 = nul(), rsiS = nul(), atrS = nul(), priorHigh = nul(), volRatio = nul();
+  let sum50 = 0, sum200 = 0, gain = 0, loss = 0, trSum = 0, volSum = 0;
+  const tr: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = bars[i].close;
+    sum50 += c;
+    sum200 += c;
+    if (i >= 50) sum50 -= bars[i - 50].close;
+    if (i >= 200) sum200 -= bars[i - 200].close;
+    if (i >= 49) s50[i] = sum50 / 50;
+    if (i >= 199) s200[i] = sum200 / 200;
+    if (i > 0) {
+      const d = c - bars[i - 1].close;
+      const up = Math.max(d, 0), down = Math.max(-d, 0);
+      if (i <= 14) {
+        gain += up / 14;
+        loss += down / 14;
+      } else {
+        gain = (gain * 13 + up) / 14;
+        loss = (loss * 13 + down) / 14;
+      }
+      if (i >= 14) rsiS[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+      const prev = bars[i - 1].close;
+      tr[i] = Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - prev), Math.abs(bars[i].low - prev));
+      trSum += tr[i];
+      if (i > 14) trSum -= tr[i - 14];
+      if (i >= 14) atrS[i] = trSum / 14;
+    }
+    if (i >= 20 && volSum > 0) volRatio[i] = bars[i].volume / (volSum / 20);
+    volSum += bars[i].volume;
+    if (i >= 20) volSum -= bars[i - 20].volume;
+    if (i >= 63) {
+      let hi = -Infinity;
+      for (let j = i - 63; j < i; j++) if (bars[j].high > hi) hi = bars[j].high;
+      priorHigh[i] = hi;
+    }
+  }
+  return { s50, s200, rsiS, atrS, priorHigh, volRatio };
+}
+
 /**
  * Recorre el histórico y simula cada vez que aparece una señal nueva: entrada al cierre,
  * stop a 2 ATR, objetivo a 4 ATR y salida al cierre si pasan 40 sesiones sin tocar ninguno.
+ * `isBull` indica, para una fecha, si la bolsa mundial estaba en tendencia alcista.
  */
-export function backtest(bars: Bar[], lookback = 300): Trade[] {
+export function backtest(bars: Bar[], isBull?: (t: number) => boolean | null): Trade[] {
   const trades: Trade[] = [];
+  const x = dailySeries(bars);
   let prev: SignalKind | null = null;
-  const start = Math.max(200, bars.length - lookback);
-  for (let t = start; t < bars.length - 1; t++) {
-    const window = bars.slice(Math.max(0, t - 280), t + 1);
-    const kind = detectSignal(window)?.kind ?? null;
+  for (let t = 200; t < bars.length - 1; t++) {
+    const kind = classify(bars[t].close, x.priorHigh[t], x.volRatio[t], x.rsiS[t], x.s50[t], x.s200[t]);
     const isNew = kind !== null && kind !== prev;
     prev = kind;
     if (!isNew) continue;
-    const a = atr(window);
+    const a = x.atrS[t];
     const entry = bars[t].close;
     if (!a || !(entry > 0)) continue;
     const stop = entry - STOP_ATR * a;
     const target = entry + TARGET_ATR * a;
     const end = t + MAX_HOLD;
     if (end >= bars.length) break; // sin datos suficientes para saber cómo acabó
+    const bull = isBull && bars[t].t !== undefined ? isBull(bars[t].t as number) : null;
     let done = false;
     for (let d = t + 1; d <= end; d++) {
       if (bars[d].low <= stop) {
-        trades.push({ kind, r: -1, days: d - t, won: false });
+        trades.push({ kind, r: -1, days: d - t, won: false, bull });
         done = true;
         break;
       }
       if (bars[d].high >= target) {
-        trades.push({ kind, r: TARGET_ATR / STOP_ATR, days: d - t, won: true });
+        trades.push({ kind, r: TARGET_ATR / STOP_ATR, days: d - t, won: true, bull });
         done = true;
         break;
       }
     }
-    if (!done) trades.push({ kind, r: (bars[end].close - entry) / (entry - stop), days: MAX_HOLD, won: false });
+    if (!done) trades.push({ kind, r: (bars[end].close - entry) / (entry - stop), days: MAX_HOLD, won: false, bull });
   }
   return trades;
 }
@@ -216,4 +273,20 @@ export function summarize(trades: Trade[]): Record<SignalKind, SignalStats | nul
     };
   }
   return out;
+}
+
+export interface RegimeStats {
+  all: Record<SignalKind, SignalStats | null>;
+  /** Operaciones abiertas con la bolsa mundial por encima de su media de 200 sesiones. */
+  bull: Record<SignalKind, SignalStats | null>;
+  /** Operaciones abiertas con la bolsa mundial por debajo de su media de 200 sesiones. */
+  bear: Record<SignalKind, SignalStats | null>;
+}
+
+export function summarizeByRegime(trades: Trade[]): RegimeStats {
+  return {
+    all: summarize(trades),
+    bull: summarize(trades.filter((t) => t.bull === true)),
+    bear: summarize(trades.filter((t) => t.bull === false)),
+  };
 }
