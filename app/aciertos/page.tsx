@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Outcome } from "@/lib/indicators";
-import { money, plain } from "@/lib/format";
+import { money, plain, signedPct } from "@/lib/format";
 import { useStore, type TrackedPick } from "@/lib/store";
 import { settlePicks } from "@/lib/tracking";
 
@@ -11,6 +11,8 @@ const LABEL = { abierta: "Abierta", objetivo: "Llegó al objetivo", stop: "Salt�
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${plain(Math.abs(r), 2)} R`;
 const tone = (v: number) => (v >= 0 ? "up-text" : "down-text");
+/** Ganancia o pérdida en % sobre el precio de entrada. */
+const pctOf = (p: TrackedPick, exit: number) => (exit / p.entry - 1) * 100;
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 const BANDS: { label: string; test: (p: TrackedPick) => boolean }[] = [
@@ -45,6 +47,10 @@ export default function Aciertos() {
   const open = picks.filter((p) => !p.result);
   const wins = closed.filter((p) => p.result!.status === "objetivo").length;
   const avgR = mean(closed.map((p) => p.result!.r));
+  const closedPcts = closed.map((p) => pctOf(p, p.result!.exit));
+  const avgPct = mean(closedPcts);
+  const openPcts = open.map((p) => (live[p.id] ? pctOf(p, live[p.id].exit) : null)).filter((x): x is number => x !== null);
+  const latentPct = mean(openPcts);
   const expectedR = mean(closed.filter((p) => p.expectedR !== null).map((p) => p.expectedR as number));
   const latent = mean(open.map((p) => live[p.id]?.r).filter((r): r is number => r !== undefined));
   const days = new Set(picks.map((p) => p.day)).size;
@@ -85,21 +91,23 @@ export default function Aciertos() {
             </div>
             <div className="card tile">
               <span className="muted small">Resultado medio de las cerradas</span>
-              <span className={`big ${closed.length ? tone(avgR) : ""}`}>{closed.length ? signedR(avgR) : "—"}</span>
-              <span className="muted small">{closed.length ? `Esperado según la simulación: ${signedR(expectedR)}` : "R = veces lo arriesgado"}</span>
+              <span className={`big ${closed.length ? tone(avgPct) : ""}`}>{closed.length ? signedPct(avgPct) : "—"}</span>
+              <span className="muted small">
+                {closed.length ? `De media por operación · ${signedR(avgR)} (esperado ${signedR(expectedR)})` : "Ganancia o pérdida media por operación"}
+              </span>
             </div>
             <div className="card tile">
               <span className="muted small">Abiertas, de momento</span>
-              <span className={`big ${open.length && checked ? tone(latent) : ""}`}>{open.length ? (checked ? signedR(latent) : "…") : "—"}</span>
-              <span className="muted small">Resultado medio si se cerraran hoy</span>
+              <span className={`big ${open.length && checked ? tone(latentPct) : ""}`}>{open.length ? (checked ? signedPct(latentPct) : "…") : "—"}</span>
+              <span className="muted small">De media si se cerraran hoy{open.length && checked ? ` · ${signedR(latent)}` : ""}</span>
             </div>
           </section>
 
           <p className={`card pad ${enough ? "" : "muted"}`}>
             {enough
               ? avgR > 0
-                ? `Con ${closed.length} operaciones cerradas, la lista está ganando de media ${signedR(avgR)} por operación antes de costes (la simulación esperaba ${signedR(expectedR)}).`
-                : `Con ${closed.length} operaciones cerradas, la lista está perdiendo de media ${signedR(avgR)} por operación antes de costes (la simulación esperaba ${signedR(expectedR)}).`
+                ? `Con ${closed.length} operaciones cerradas, la lista está ganando de media un ${signedPct(avgPct)} (${signedR(avgR)}) por operación antes de costes (la simulación esperaba ${signedR(expectedR)}).`
+                : `Con ${closed.length} operaciones cerradas, la lista está perdiendo de media un ${signedPct(avgPct)} (${signedR(avgR)}) por operación antes de costes (la simulación esperaba ${signedR(expectedR)}).`
               : `Aún es pronto para sacar conclusiones: hay ${closed.length} cerradas y hacen falta al menos ${MIN_SAMPLE} para que el resultado signifique algo. Cada operación tarda unas tres semanas en cerrarse.`}
           </p>
 
@@ -109,7 +117,7 @@ export default function Aciertos() {
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Grupo</th><th>Cerradas</th><th>Llegaron al objetivo</th><th>Resultado medio</th></tr>
+                    <tr><th>Grupo</th><th>Cerradas</th><th>Llegaron al objetivo</th><th>Ganancia media</th><th>En riesgo</th></tr>
                   </thead>
                   <tbody>
                     {BANDS.map((band) => {
@@ -121,6 +129,7 @@ export default function Aciertos() {
                           <th scope="row">{band.label}</th>
                           <td>{list.length}</td>
                           <td>{list.length ? `${w} (${Math.round((w / list.length) * 100)} %)` : "—"}</td>
+                          <td className={list.length ? tone(r) : ""}>{list.length ? signedPct(mean(list.map((p) => pctOf(p, p.result!.exit)))) : "—"}</td>
                           <td className={list.length ? tone(r) : ""}>{list.length ? signedR(r) : "—"}</td>
                         </tr>
                       );
@@ -136,7 +145,7 @@ export default function Aciertos() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Día</th><th>Puesto</th><th>Valor</th><th>Señal</th><th>Nota</th><th>Entrada</th><th>Stop / objetivo</th><th>Estado</th><th>Resultado</th><th>Sesiones</th></tr>
+                  <tr><th>Día</th><th>Puesto</th><th>Valor</th><th>Señal</th><th>Nota</th><th>Entrada</th><th>Stop / objetivo</th><th>Estado</th><th>Precio de salida</th><th>Ganancia o pérdida</th><th>En riesgo</th><th>Sesiones</th></tr>
                 </thead>
                 <tbody>
                   {picks.map((p) => {
@@ -151,7 +160,9 @@ export default function Aciertos() {
                         <td>{money(p.entry, p.currency)}</td>
                         <td>{money(p.stop, p.currency)} / {money(p.target, p.currency)}</td>
                         <td>{o ? LABEL[o.status] : checked ? "Sin datos" : "…"}</td>
-                        <td className={o ? tone(o.r) : ""}>{o ? `${signedR(o.r)} · ${money(o.exit, p.currency)}` : "…"}</td>
+                        <td>{o ? money(o.exit, p.currency) : "…"}</td>
+                        <td className={o ? tone(o.r) : ""}>{o ? signedPct(pctOf(p, o.exit)) : "…"}</td>
+                        <td className={o ? tone(o.r) : ""}>{o ? signedR(o.r) : "…"}</td>
                         <td>{o ? o.days : "…"}</td>
                       </tr>
                     );
@@ -164,7 +175,8 @@ export default function Aciertos() {
       )}
 
       <p className="muted small">
-        Un valor que repite en la lista varios días cuenta una sola vez mientras su operación siga abierta. Los resultados son antes de
+        Un valor que repite en la lista varios días cuenta una sola vez mientras su operación siga abierta. El porcentaje es la variación del precio desde la entrada (en las abiertas, hasta el último cierre); R es ese
+        resultado medido en veces lo arriesgado. Los resultados son antes de
         comisiones, cambio de divisa e impuestos. El registro se guarda en este navegador y solo se apuntan los días en que abres la app.
       </p>
     </>
