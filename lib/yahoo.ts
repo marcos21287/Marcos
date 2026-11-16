@@ -515,11 +515,19 @@ export function getOpportunities(): Promise<Scan> {
 
     // Paso 3: análisis completo de los mejores.
     const out: Opportunity[] = [];
+    let excluded = 0;
     await pool(signals.slice(0, DEEP_LIMIT), 5, async ({ symbol }) => {
       try {
         const a = await getAnalysis(symbol);
         const t = a.technicals;
         if (!a.signal || !t || a.price === null || t.atr === null) return;
+        // Requisitos imprescindibles: fuera las empresas con ingresos a la baja o en pérdidas.
+        const revenueTrend = cagr(a.yearly.map((y) => y.revenue));
+        const lastEarnings = a.yearly.length ? a.yearly[a.yearly.length - 1].earnings : null;
+        if ((revenueTrend !== null && revenueTrend < 0) || (lastEarnings !== null && Number.isFinite(lastEarnings) && lastEarnings <= 0)) {
+          excluded++;
+          return;
+        }
         const stop = a.price - STOP_ATR * t.atr;
         const target = a.price + TARGET_ATR * t.atr;
         const lossPct = ((a.price - stop) / a.price) * 100;
@@ -560,6 +568,6 @@ export function getOpportunities(): Promise<Scan> {
       .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
       .filter(limitPerSector(MAX_PER_SECTOR))
       .slice(0, TOP);
-    return { items: ranked, stats, analyzed: out.length, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
+    return { items: ranked, stats, excluded, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
 }
