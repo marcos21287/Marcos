@@ -6,5 +6,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export function GET() {
-  return json(() => getOpportunities(), 3600);
+  // Pasada la hora se recalcula antes de responder, en vez de servir una vez más la lista antigua.
+  return json(() => getOpportunities(), 3600, 60);
 }

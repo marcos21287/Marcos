@@ -26,8 +26,9 @@ export async function recordToday() {
   const res = await fetch("/api/opportunities");
   if (!res.ok) return;
   const scan = (await res.json()) as Scan;
-  if (!scan.items?.length) return;
-  const day = localDay(scan.at);
+  // Solo se apunta una lista reciente, y con la fecha de hoy (no la del cálculo guardado).
+  if (!scan.items?.length || Date.now() - scan.at > 3 * 3_600_000) return;
+  const day = localDay(Date.now());
   update((s) => {
     if (s.picks.some((p) => p.day === day)) return s;
     const open = new Set(s.picks.filter((p) => !p.result).map((p) => p.symbol));
