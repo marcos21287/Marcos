@@ -7,11 +7,14 @@ y del Banco Mundial.
 
 - **Mercado**: índices principales y tu lista de seguimiento.
 - **Oportunidades**: revisa sola cientos de valores (IBEX 35, grandes de Europa y EE. UU., más los más activos del día;
-  lista en `lib/universe.ts`) y muestra los 10 con mejor nota entre los que cumplen una señal (ruptura, tendencia o
-  sobreventa), descartando las empresas con ingresos a la baja o en pérdidas. La nota suma el chequeo de la empresa y su entorno: macro global (S&P 500, VIX, tipos a 10 años),
-  país (índice bursátil, PIB, inflación y paro del Banco Mundial) y sector. Incluye el tamaño de posición para tu
-  capital y riesgo por operación, el precio en vivo y lo que cabe esperar según el histórico: cada señal se simula en
-  todos los valores (stop a 2 ATR, objetivo a 4 ATR, salida a las 40 sesiones) para estimar resultado medio y plazo.
+  lista en `lib/universe.ts`) con al menos 5 millones negociados al día y muestra los 10 con mejor nota entre los que
+  cumplen una señal (ruptura, tendencia o sobreventa). Quedan fuera las empresas con ingresos a la baja, en pérdidas,
+  con deuda neta superior a 4 veces el EBITDA, con PER por encima de 50 o que publican resultados en 7 días, y como
+  mucho entran 3 por sector. La nota suma el chequeo de la empresa (crecimiento, rentabilidad, solidez, valoración
+  frente a su sector, dividendo, técnico, analistas, posiciones cortas y directivos) y su entorno: macro global
+  (S&P 500, VIX, tipos a 10 años), país (índice, PIB, inflación, paro, divisa) y sector. Cada señal se simula sobre
+  unos cuatro años y medio de histórico (stop a 2 ATR, objetivo a 4 ATR, salida a las 40 sesiones), separando mercado
+  alcista y bajista, para estimar resultado medio y plazo.
 - **Detalle de acción**: gráfico, chequeo automático de fundamentales (ingresos, beneficio, ROE, margen EBITDA,
   deuda, PER, dividendo, técnico…), datos clave, análisis técnico, ingresos anuales, noticias y alertas.
 - **Diario**: operaciones simuladas sin dinero real. Se cierran solas al tocar stop u objetivo o a los 56 días, y se

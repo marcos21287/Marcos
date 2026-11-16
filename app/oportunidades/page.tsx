@@ -222,7 +222,7 @@ export default function Oportunidades() {
                   const cell = (x: SignalStats | null) =>
                     x ? (
                       <td className={x.avgR < 0 ? "down-text" : "up-text"}>
-                        {x.avgR >= 0 ? "+" : "−"}{plain(Math.abs(x.avgR), 2)} R <span className="muted small">({Math.round(x.winRate * 100)} % · {x.trades.toLocaleString("es-ES")})</span>
+                        {x.avgR >= 0 ? "+" : "−"}{plain(Math.abs(x.avgR), 2)} R <span className="muted small">({Math.round(x.winRate * 100)} % · {x.trades.toLocaleString("es-ES", { useGrouping: "always" })})</span>
                       </td>
                     ) : (
                       <td>—</td>
@@ -232,7 +232,7 @@ export default function Oportunidades() {
                       <th scope="row">{k}</th>
                       {st ? (
                         <>
-                          <td>{st.trades.toLocaleString("es-ES")}</td>
+                          <td>{st.trades.toLocaleString("es-ES", { useGrouping: "always" })}</td>
                           <td>{Math.round(st.winRate * 100)} %</td>
                           <td>{weeks(st.avgDays)}</td>
                           <td className={st.avgR < 0 ? "down-text" : "up-text"}>{st.avgR >= 0 ? "+" : "−"}{plain(Math.abs(st.avgR), 2)} R</td>
@@ -254,7 +254,7 @@ export default function Oportunidades() {
           </p>
           <p className="muted small">
             «Resultado medio esperado» de cada tarjeta = resultado medio histórico de su señal × lo que arriesgas en esa acción. Es una media
-            de muchas operaciones pasadas, sin comisiones ni impuestos: una operación concreta acaba en el stop, en el objetivo o entre medias,
+            de muchas operaciones pasadas y ese porcentaje no incluye costes: una operación concreta acaba en el stop, en el objetivo o entre medias,
             y el pasado no garantiza el futuro. Los importes de las tarjetas están en euros al cambio actual, con comisiones, cambio de divisa e
             impuestos descontados; como mucho aparecen 3 valores de un mismo sector.
           </p>
