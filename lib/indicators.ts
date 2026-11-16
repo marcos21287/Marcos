@@ -290,3 +290,38 @@ export function summarizeByRegime(trades: Trade[]): RegimeStats {
     bear: summarize(trades.filter((t) => t.bull === false)),
   };
 }
+
+// ---- Seguimiento de operaciones reales o simuladas ----
+
+export interface Outcome {
+  status: "abierta" | "objetivo" | "stop" | "plazo";
+  /** Resultado en múltiplos del riesgo (latente si sigue abierta). */
+  r: number;
+  /** Sesiones transcurridas desde la entrada. */
+  days: number;
+  /** Precio de salida, o último cierre si sigue abierta. */
+  exit: number;
+  /** Fecha de la sesión de salida, o de la última sesión si sigue abierta. */
+  exitAt: number | null;
+}
+
+/**
+ * Qué pasó con una entrada hecha en `since` a precio `entry`: recorre las sesiones posteriores y
+ * mira si tocó antes el stop o el objetivo, o si agotó las 40 sesiones. Funciona aunque nadie
+ * estuviera mirando, porque usa los máximos y mínimos de cada día.
+ */
+export function evaluate(bars: Bar[], since: number, entry: number, stop: number, target: number): Outcome {
+  const risk = entry - stop;
+  const later = bars.filter((b) => b.t !== undefined && (b.t as number) > since);
+  for (let i = 0; i < later.length && i < MAX_HOLD; i++) {
+    const b = later[i];
+    if (b.low <= stop) return { status: "stop", r: -1, days: i + 1, exit: stop, exitAt: b.t ?? null };
+    if (b.high >= target) return { status: "objetivo", r: (target - entry) / risk, days: i + 1, exit: target, exitAt: b.t ?? null };
+  }
+  if (later.length >= MAX_HOLD) {
+    const b = later[MAX_HOLD - 1];
+    return { status: "plazo", r: (b.close - entry) / risk, days: MAX_HOLD, exit: b.close, exitAt: b.t ?? null };
+  }
+  const last = later[later.length - 1];
+  return { status: "abierta", r: last ? (last.close - entry) / risk : 0, days: later.length, exit: last ? last.close : entry, exitAt: last?.t ?? null };
+}

@@ -2,7 +2,7 @@
 import YahooFinance from "yahoo-finance2";
 import { cagr, runChecks, runContextChecks, yearsWithoutCut, type CheckResult, type ContextResult, type MarketStat } from "./checks";
 import { COUNTRIES, SECTORS, WB_INDICATORS } from "./context";
-import { backtest, detectSignal, summarizeByRegime, technicals, STOP_ATR, TARGET_ATR, type Bar, type RegimeStats, type Signal, type Technicals, type Trade } from "./indicators";
+import { backtest, detectSignal, evaluate, type Outcome, summarizeByRegime, technicals, STOP_ATR, TARGET_ATR, type Bar, type RegimeStats, type Signal, type Technicals, type Trade } from "./indicators";
 import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -555,7 +555,11 @@ export function getOpportunities(): Promise<Scan> {
     for (let i = 0; i < universe.length; i += 50) chunks.push(universe.slice(i, i + 50));
     await pool(chunks, 3, async (chunk) => {
       try {
-        const rows = await yf.quote(chunk);
+        // Un reintento tras una pausa: los fallos de Yahoo suelen ser pasajeros.
+        const rows = await yf.quote(chunk).catch(async () => {
+          await new Promise((done) => setTimeout(done, 1500));
+          return yf.quote(chunk);
+        });
         for (const r of rows) {
           const p = n(r.regularMarketPrice);
           const m50 = n(r.fiftyDayAverage);
@@ -580,6 +584,12 @@ export function getOpportunities(): Promise<Scan> {
       }
     });
 
+    // Si Yahoo no ha respondido para buena parte del universo, se da por fallida la revisión:
+    // así no se guarda ni se muestra una lista incompleta como si fuera buena.
+    if (scanned + illiquid < universe.length / 2) {
+      throw new Error("Yahoo Finance no ha respondido para la mayoría de los valores; inténtalo de nuevo en unos minutos");
+    }
+
     // Paso 2: histórico de todos los valores para confirmar la señal de hoy y
     // medir qué pasó en el pasado al seguir cada señal (stop a 2 ATR, objetivo a 4 ATR).
     const signals: { symbol: string; kind: Signal["kind"]; momentum: number }[] = [];
@@ -601,6 +611,9 @@ export function getOpportunities(): Promise<Scan> {
         failed++;
       }
     });
+    if (failed > quoted.length / 3) {
+      throw new Error("Yahoo Finance ha fallado en demasiados valores; inténtalo de nuevo en unos minutos");
+    }
     const stats = summarizeByRegime(trades);
     const current = regime.now === null ? stats.all : regime.now ? stats.bull : stats.bear;
     signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
@@ -662,4 +675,26 @@ export function getOpportunities(): Promise<Scan> {
       .slice(0, TOP);
     return { items: ranked, stats, regime: regime.now === null ? null : regime.now ? "alcista" : "bajista", excluded, excludedBy, illiquid, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
   });
+}
+
+export interface OutcomeRequest {
+  id: string;
+  symbol: string;
+  since: number;
+  entry: number;
+  stop: number;
+  target: number;
+}
+
+/** Evalúa varias entradas contra el histórico diario real. */
+export async function getOutcomes(items: OutcomeRequest[]): Promise<Record<string, Outcome>> {
+  const out: Record<string, Outcome> = {};
+  await pool(items.slice(0, 150), 6, async (it) => {
+    try {
+      out[it.id] = evaluate(await getDailyBars(it.symbol), it.since, it.entry, it.stop, it.target);
+    } catch {
+      // Sin histórico para este valor: se queda sin evaluar esta vez.
+    }
+  });
+  return out;
 }

@@ -46,6 +46,27 @@ export interface PaperTrade {
   reason?: "objetivo" | "stop" | "plazo" | "manual";
 }
 
+/** Oportunidad registrada automáticamente para comprobar después si acertó. */
+export interface TrackedPick {
+  id: string;
+  /** Día en que apareció en la lista (AAAA-MM-DD). */
+  day: string;
+  rank: number;
+  symbol: string;
+  name: string;
+  currency: string;
+  signal: string;
+  score: number | null;
+  entry: number;
+  stop: number;
+  target: number;
+  at: number;
+  /** Resultado medio histórico de su señal al registrarla, en múltiplos del riesgo. */
+  expectedR: number | null;
+  /** Resultado final, cuando ya se ha cerrado. */
+  result?: { status: "objetivo" | "stop" | "plazo"; r: number; days: number; exit: number; exitAt: number | null };
+}
+
 export interface State {
   watchlist: string[];
   alerts: PriceAlert[];
@@ -58,6 +79,7 @@ export interface State {
   fxPct: number;
   taxPct: number;
   trades: PaperTrade[];
+  picks: TrackedPick[];
 }
 
 const KEY = "vigia:v1";
@@ -73,6 +95,7 @@ export const DEFAULT_STATE: State = {
   fxPct: 0.5,
   taxPct: 19,
   trades: [],
+  picks: [],
 };
 
 let current: State | null = null;

@@ -43,7 +43,7 @@ export default function Diario() {
         <div>
           <h1>Diario de operaciones simuladas</h1>
           <p className="muted">
-            Prueba las oportunidades sin dinero real. Vigía cierra sola cada operación al tocar el stop o el objetivo, o a los 56 días, y
+            Prueba las oportunidades sin dinero real. Vigía cierra sola cada operación al tocar el stop o el objetivo, o a las 40 sesiones, y
             compara lo que sale con lo que esperaba.
           </p>
         </div>
@@ -181,9 +181,8 @@ export default function Diario() {
 
       <p className="muted small">
         Resultados en euros al cambio del día de la compra, con {money(costs.commission, "EUR")} de comisión por orden y {plain(costs.fxPct)} % de
-        cambio de divisa. Riesgo máximo por operación abierta ahora: {money(Math.max(0, ...book.open.map(riskEur)), "EUR")}. El diario solo se
-        actualiza mientras Vigía está abierta: si el precio toca el stop o el objetivo con la app cerrada, se cierra al precio que haya al
-        volver a abrirla.
+        cambio de divisa. Riesgo máximo por operación abierta ahora: {money(Math.max(0, ...book.open.map(riskEur)), "EUR")}. Al abrir Vigía se repasa el histórico
+        real de precios: si una operación tocó el stop o el objetivo con la app cerrada, se cierra a ese precio y en esa fecha.
       </p>
     </>
   );

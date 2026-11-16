@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import type { CheckStatus } from "@/lib/checks";
 import { money } from "@/lib/format";
 import { addNotice, getState, notify, update } from "@/lib/store";
-import { MAX_HOLD_DAYS } from "@/lib/trades";
+import { fetchOutcomes, recordToday, settlePicks } from "@/lib/tracking";
 import type { Analysis, Quote } from "@/lib/yahoo";
 
 async function checkPrices() {
@@ -36,29 +36,26 @@ async function checkPrices() {
   });
 }
 
-/** Cierra las operaciones simuladas que tocan el stop o el objetivo, o que superan el plazo máximo. */
+/**
+ * Cierra las operaciones simuladas del diario según el histórico real: si tocaron el stop o el
+ * objetivo con la app cerrada, se cierran a ese precio y en esa fecha.
+ */
 async function checkTrades() {
   const open = getState().trades.filter((t) => t.status === "open");
   if (!open.length) return;
-  const symbols = [...new Set(open.map((t) => t.symbol))];
-  const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`);
-  if (!res.ok) return;
-  const price = new Map(((await res.json()) as Quote[]).map((q) => [q.symbol, q.price]));
+  const outcomes = await fetchOutcomes(open.map((t) => ({ id: t.id, symbol: t.symbol, since: t.openedAt, entry: t.entry, stop: t.stop, target: t.target })));
   update((s) => {
     let next = s;
     for (const t of s.trades) {
-      const p = price.get(t.symbol);
-      if (t.status !== "open" || p === null || p === undefined) continue;
-      const expired = Date.now() - t.openedAt > MAX_HOLD_DAYS * 86_400_000;
-      const reason = p <= t.stop ? "stop" : p >= t.target ? "objetivo" : expired ? "plazo" : null;
-      if (!reason) continue;
-      const exit = reason === "stop" ? t.stop : reason === "objetivo" ? t.target : p;
-      const text = `Diario: ${t.symbol} cerrada por ${reason} a ${money(exit, t.currency)}`;
+      const o = outcomes[t.id];
+      if (t.status !== "open" || !o || o.status === "abierta") continue;
+      const reason = o.status;
+      const text = `Diario: ${t.symbol} cerrada por ${o.status} a ${money(o.exit, t.currency)}`;
       next = addNotice(
-        { ...next, trades: next.trades.map((x) => (x.id === t.id ? { ...x, status: "closed", exit, closedAt: Date.now(), reason } : x)) },
+        { ...next, trades: next.trades.map((x) => (x.id === t.id ? { ...x, status: "closed", exit: o.exit, closedAt: o.exitAt ?? Date.now(), reason } : x)) },
         t.symbol,
         text,
-        reason === "objetivo",
+        o.status === "objetivo",
       );
       notify("Operación simulada cerrada", text);
     }
@@ -96,18 +93,24 @@ async function checkFundamentals() {
 export function AlertRunner() {
   useEffect(() => {
     const safe = (fn: () => Promise<void>) => () => void fn().catch(() => {});
-    const prices = safe(async () => {
-      await checkPrices();
-      await checkTrades();
-    });
+    const prices = safe(checkPrices);
     const funds = safe(checkFundamentals);
     prices();
     funds();
+    // Registro automático de las 10 del día y comprobación de las anteriores, cada hora.
+    const track = safe(async () => {
+      await recordToday();
+      await settlePicks();
+      await checkTrades();
+    });
+    track();
+    const c = setInterval(track, 60 * 60_000);
     const a = setInterval(prices, 60_000);
     const b = setInterval(funds, 30 * 60_000);
     return () => {
       clearInterval(a);
       clearInterval(b);
+      clearInterval(c);
     };
   }, []);
   return null;

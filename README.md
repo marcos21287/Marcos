@@ -17,7 +17,10 @@ y del Banco Mundial.
   alcista y bajista, para estimar resultado medio y plazo.
 - **Detalle de acción**: gráfico, chequeo automático de fundamentales (ingresos, beneficio, ROE, margen EBITDA,
   deuda, PER, dividendo, técnico…), datos clave, análisis técnico, ingresos anuales, noticias y alertas.
-- **Diario**: operaciones simuladas sin dinero real. Se cierran solas al tocar stop u objetivo o a los 56 días, y se
+- **Aciertos**: cada día que abres la app se registran solas las 10 mejores y se comprueba después, con el histórico
+  real de precios, si llegaron al objetivo o al stop, comparándolo con lo esperado.
+- **Diario**: operaciones simuladas sin dinero real. Se cierran solas al tocar stop u objetivo o a las 40 sesiones
+  (según el histórico real, aunque la app estuviera cerrada), y se
   compara el resultado con el esperado. Limita el riesgo abierto al 6 % del capital y la compra al efectivo libre.
 - **Alertas**: avisos de precio y vigilancia automática de los controles del chequeo.
 

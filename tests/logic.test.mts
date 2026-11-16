@@ -113,3 +113,20 @@ test("costes: comisiones, cambio de divisa, impuestos y límite de efectivo", ()
   assert.equal(positionSize(1000, 2, 4.62, 4.4, 100).shares, 21);
   assert.equal(positionSize(1000, 2, 4.62, 4.4, 0).shares, 0);
 });
+
+test("seguimiento: evalúa una entrada contra las sesiones posteriores", async () => {
+  const { evaluate } = await import("../lib/indicators.ts");
+  const bar = (t: number, low: number, high: number, close: number) => ({ t, low, high, close, volume: 1 });
+  const since = 1000;
+  // La sesión del día de entrada (t <= since) no cuenta; la segunda posterior toca el objetivo.
+  const win = evaluate([bar(900, 1, 200, 100), bar(1100, 97, 103, 101), bar(1200, 100, 111, 110)], since, 100, 95, 110);
+  assert.deepEqual([win.status, win.r, win.days, win.exit], ["objetivo", 2, 2, 110]);
+  const loss = evaluate([bar(1100, 94, 101, 96)], since, 100, 95, 110);
+  assert.deepEqual([loss.status, loss.r, loss.exit], ["stop", -1, 95]);
+  const open = evaluate([bar(1100, 99, 104, 102.5)], since, 100, 95, 110);
+  assert.deepEqual([open.status, open.r, open.days], ["abierta", 0.5, 1]);
+  const flat = Array.from({ length: 45 }, (_, i) => bar(1100 + i, 99, 103, 101));
+  const timeout = evaluate(flat, since, 100, 95, 110);
+  assert.deepEqual([timeout.status, timeout.days, timeout.r], ["plazo", 40, 0.2]);
+  assert.equal(evaluate([], since, 100, 95, 110).status, "abierta");
+});

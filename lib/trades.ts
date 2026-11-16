@@ -4,9 +4,6 @@ import type { PaperTrade, State } from "./store";
 
 /** Máximo de riesgo abierto a la vez, en % del capital. */
 export const MAX_OPEN_RISK_PCT = 6;
-/** Sesiones máximas de una operación, igual que en la simulación histórica (40 sesiones ≈ 56 días). */
-export const MAX_HOLD_DAYS = 56;
-
 export const costsOf = (s: State): Costs => ({ commission: s.commission, fxPct: s.fxPct, taxPct: s.taxPct });
 
 /** Divisa → símbolo de Yahoo del cambio frente al euro, o null si ya es euro. */
