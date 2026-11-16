@@ -406,6 +406,8 @@ export interface Scan {
   withSignal: number;
   /** Valores con análisis completo, de los que salen los 10 mejores. */
   analyzed: number;
+  /** Descartados por ingresos a la baja o pérdidas. */
+  excluded: number;
   /** Qué pasó históricamente al seguir cada señal en todos los valores revisados. */
   stats: Record<Signal["kind"], SignalStats | null>;
   failed: number;

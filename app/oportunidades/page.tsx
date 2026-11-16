@@ -49,7 +49,7 @@ export default function Oportunidades() {
           <h1>Las 10 mejores oportunidades</h1>
           <p className="muted">
             {data
-              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector).`
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector). Se han descartado ${data.excluded} por tener ingresos a la baja o pérdidas.`
               : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
