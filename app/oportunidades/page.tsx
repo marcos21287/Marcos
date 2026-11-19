@@ -102,13 +102,15 @@ export default function Oportunidades() {
         </p>
       </section>
 
-      {data?.alarm.caution && (
+      {data && (data.alarm.caution || data.regime === "bajista") && (
         <section className="card pad alarm">
           <h2>Mercado en alerta</h2>
           <p>
-            Se detecta {data.alarm.reasons.join(" y ")}. Con el mercado así, la simulación da las compras en tendencia y ruptura casi planas o
-            en pérdidas, así que hoy solo se proponen sobreventas ({data.pausedByMarket} señales de tendencia o ruptura en pausa). Los resultados
-            esperados usan lo que pasó con bolsa bajista.
+            {data.alarm.caution ? `Se detecta ${data.alarm.reasons.join(" y ")}. ` : ""}
+            Según la prueba histórica de cuatro años y medio, en estas condiciones las rupturas pierden dinero
+            {data.regime === "bajista" ? " y las compras en tendencia apenas ganan" : ", mientras que las compras en tendencia siguen funcionando igual"}
+            , así que se pausan {data.regime === "bajista" ? "las dos" : "las rupturas"} ({data.pausedByMarket} señales en pausa). Las sobreventas
+            se mantienen: históricamente rinden más cuando el mercado está nervioso.
           </p>
         </section>
       )}
@@ -225,7 +227,7 @@ export default function Oportunidades() {
               Vigía ha simulado cada señal en los {data.scanned} valores durante unos cuatro años y medio, caída de 2022 incluida: comprar al
               aparecer la señal, stop a 2 veces el rango medio diario (ATR), objetivo a 4 veces y salida a las 40 sesiones si no toca ninguno.
               El resultado se separa según la bolsa mundial estuviera alcista o bajista al entrar; las tarjetas usan el de la situación actual
-              {data.alarm.caution ? " (mercado en alerta, se usa el de bolsa bajista)" : data.regime ? ` (${data.regime})` : ""}.
+              {data.regime ? ` (${data.regime})` : ""}.
             </p>
           </div>
           <div className="table-wrap">

@@ -446,13 +446,13 @@ export interface Scan {
   stats: RegimeStats;
   /** Situación actual de la bolsa mundial (S&P 500 frente a su media de 200 sesiones). */
   regime: "alcista" | "bajista" | null;
-  /** Alarma rápida de mercado: con ella activa solo se proponen sobreventas. */
+  /** Alarma rápida de mercado: con ella activa se pausan las rupturas. */
   alarm: { caution: boolean; reasons: string[] };
   /** Nota mínima (fracción de controles cumplidos) para entrar en la lista. */
   minScore: number;
   /** Valores que no llegan a la nota mínima. */
   belowScore: number;
-  /** Señales de tendencia o ruptura descartadas por la alarma de mercado. */
+  /** Señales en pausa por el mercado: rupturas con la alarma activa y tendencias con bolsa bajista. */
   pausedByMarket: number;
   /** Señales descartadas por una caída fuerte en los últimos días (equivale a un stop reciente). */
   recentDrop: number;
@@ -622,9 +622,12 @@ export function getOpportunities(): Promise<Scan> {
         const signal = detectSignal(bars);
         const t = technicals(bars);
         if (signal && t && t.sma200) {
-          // Con el mercado en alerta, las compras en tendencia o ruptura se pausan: con bolsa bajista
-          // la simulación las da casi planas o en pérdidas. Las sobreventas sí se mantienen.
-          if (alarm.caution && signal.kind !== "Sobreventa") {
+          // Pausas por mercado, según la prueba histórica de 4,5 años: las rupturas pierden dinero con la
+          // alarma rápida activa (−0,04 R frente a +0,14 R sin ella); las tendencias no empeoran con la
+          // alarma, pero sí con el S&P 500 bajo su media de 200 (+0,03 R frente a +0,10 R). Las sobreventas
+          // rinden más en mercados nerviosos y se mantienen siempre.
+          const paused = (signal.kind === "Ruptura" && alarm.caution) || (signal.kind === "Tendencia" && regime.now === false);
+          if (paused) {
             pausedByMarket++;
             return;
           }
@@ -646,8 +649,7 @@ export function getOpportunities(): Promise<Scan> {
       throw new Error("Yahoo Finance ha fallado en demasiados valores; inténtalo de nuevo en unos minutos");
     }
     const stats = summarizeByRegime(trades);
-    // Con la alarma activa se usa lo que pasó en mercado bajista, aunque la media de 200 aún no haya girado.
-    const current = alarm.caution || regime.now === false ? stats.bear : regime.now ? stats.bull : stats.all;
+    const current = regime.now === null ? stats.all : regime.now ? stats.bull : stats.bear;
     signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
 
     // Paso 3: análisis completo de los mejores.
