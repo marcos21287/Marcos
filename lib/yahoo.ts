@@ -684,6 +684,18 @@ export interface OutcomeRequest {
   entry: number;
   stop: number;
   target: number;
+  /** Índice con el que comparar (opcional). */
+  bench?: string;
+}
+
+/** Cierre del índice en la última sesión hasta una fecha. */
+function closeAt(bars: Bar[], t: number): number | null {
+  let found: number | null = null;
+  for (const b of bars) {
+    if (b.t === undefined || b.t > t) break;
+    found = b.close;
+  }
+  return found;
 }
 
 /** Evalúa varias entradas contra el histórico diario real. */
@@ -691,7 +703,14 @@ export async function getOutcomes(items: OutcomeRequest[]): Promise<Record<strin
   const out: Record<string, Outcome> = {};
   await pool(items.slice(0, 150), 6, async (it) => {
     try {
-      out[it.id] = evaluate(await getDailyBars(it.symbol), it.since, it.entry, it.stop, it.target);
+      const o = evaluate(await getDailyBars(it.symbol), it.since, it.entry, it.stop, it.target);
+      if (it.bench) {
+        const idx = await getDailyBars(it.bench).catch(() => [] as Bar[]);
+        const start = closeAt(idx, it.since);
+        const end = closeAt(idx, o.exitAt ?? Date.now());
+        o.benchPct = start && end ? end / start - 1 : null;
+      }
+      out[it.id] = o;
     } catch {
       // Sin histórico para este valor: se queda sin evaluar esta vez.
     }

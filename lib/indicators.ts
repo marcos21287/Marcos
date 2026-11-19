@@ -303,6 +303,8 @@ export interface Outcome {
   exit: number;
   /** Fecha de la sesión de salida, o de la última sesión si sigue abierta. */
   exitAt: number | null;
+  /** Variación del índice de referencia en el mismo periodo (0,02 = +2 %), si se pidió. */
+  benchPct?: number | null;
 }
 
 /**

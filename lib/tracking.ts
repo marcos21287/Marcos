@@ -16,7 +16,15 @@ export async function fetchOutcomes(items: OutcomeRequest[]): Promise<Record<str
   return (await res.json()) as Record<string, Outcome>;
 }
 
-export const pickRequest = (p: TrackedPick): OutcomeRequest => ({ id: p.id, symbol: p.symbol, since: p.at, entry: p.entry, stop: p.stop, target: p.target });
+/** Índice de referencia según la bolsa en la que cotiza el valor. */
+export function benchFor(symbol: string): string {
+  const suffix = symbol.includes(".") ? symbol.slice(symbol.lastIndexOf(".")) : "";
+  return (
+    { ".MC": "^IBEX", ".DE": "^GDAXI", ".PA": "^FCHI", ".AS": "^AEX", ".MI": "FTSEMIB.MI", ".L": "^FTSE", ".SW": "^SSMI", ".BR": "^BFX", ".HE": "^OMXH25" } as Record<string, string>
+  )[suffix] ?? "^GSPC";
+}
+
+export const pickRequest = (p: TrackedPick): OutcomeRequest => ({ id: p.id, symbol: p.symbol, since: p.at, entry: p.entry, stop: p.stop, target: p.target, bench: benchFor(p.symbol) });
 
 /**
  * Apunta las oportunidades de hoy que no estén ya en seguimiento. Un valor que repite en la lista
@@ -55,7 +63,8 @@ export async function recordToday() {
 
 /** Comprueba las que siguen abiertas y guarda el resultado de las que ya se han cerrado. */
 export async function settlePicks(): Promise<Record<string, Outcome>> {
-  const open = getState().picks.filter((p) => !p.result);
+  // También se repasan las cerradas sin comparación con el índice, para completarla.
+  const open = getState().picks.filter((p) => !p.result || p.result.benchPct === undefined);
   const outcomes = await fetchOutcomes(open.map(pickRequest));
   const closed = Object.entries(outcomes).filter(([, o]) => o.status !== "abierta");
   if (closed.length) {
@@ -63,7 +72,8 @@ export async function settlePicks(): Promise<Record<string, Outcome>> {
       ...s,
       picks: s.picks.map((p) => {
         const o = outcomes[p.id];
-        return o && o.status !== "abierta" && !p.result ? { ...p, result: { status: o.status, r: o.r, days: o.days, exit: o.exit, exitAt: o.exitAt } } : p;
+        if (!o || o.status === "abierta") return p;
+        return { ...p, result: { status: o.status, r: o.r, days: o.days, exit: o.exit, exitAt: o.exitAt, benchPct: o.benchPct ?? null } };
       }),
     }));
   }

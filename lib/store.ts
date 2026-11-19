@@ -64,7 +64,7 @@ export interface TrackedPick {
   /** Resultado medio histórico de su señal al registrarla, en múltiplos del riesgo. */
   expectedR: number | null;
   /** Resultado final, cuando ya se ha cerrado. */
-  result?: { status: "objetivo" | "stop" | "plazo"; r: number; days: number; exit: number; exitAt: number | null };
+  result?: { status: "objetivo" | "stop" | "plazo"; r: number; days: number; exit: number; exitAt: number | null; benchPct?: number | null };
 }
 
 export interface State {

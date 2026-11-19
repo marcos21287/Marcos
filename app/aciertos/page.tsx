@@ -13,6 +13,10 @@ const signedR = (r: number) => `${r >= 0 ? "+" : "−"}${plain(Math.abs(r), 2)} 
 const tone = (v: number) => (v >= 0 ? "up-text" : "down-text");
 /** Ganancia o pérdida en % sobre el precio de entrada. */
 const pctOf = (p: TrackedPick, exit: number) => (exit / p.entry - 1) * 100;
+/** Diferencia frente al índice, en puntos porcentuales (null si no se conoce). */
+const vsMarket = (p: TrackedPick, exit: number, benchPct: number | null | undefined) =>
+  benchPct === null || benchPct === undefined ? null : pctOf(p, exit) - benchPct * 100;
+const points = (v: number) => `${v >= 0 ? "+" : "−"}${plain(Math.abs(v), 1)} puntos`;
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 const BANDS: { label: string; test: (p: TrackedPick) => boolean }[] = [
@@ -51,6 +55,27 @@ export default function Aciertos() {
   const avgPct = mean(closedPcts);
   const openPcts = open.map((p) => (live[p.id] ? pctOf(p, live[p.id].exit) : null)).filter((x): x is number => x !== null);
   const latentPct = mean(openPcts);
+  const diffs = picks
+    .map((p) => {
+      const o = p.result ?? live[p.id];
+      return o ? vsMarket(p, o.exit, o.benchPct) : null;
+    })
+    .filter((x): x is number => x !== null);
+  const marketPct = mean(
+    picks
+      .map((p) => (p.result ?? live[p.id])?.benchPct)
+      .filter((x): x is number => typeof x === "number")
+      .map((x) => x * 100),
+  );
+  const avgDiff = mean(diffs);
+  const allPct = mean(
+    picks
+      .map((p) => {
+        const o = p.result ?? live[p.id];
+        return o && typeof o.benchPct === "number" ? pctOf(p, o.exit) : null;
+      })
+      .filter((x): x is number => x !== null),
+  );
   const expectedR = mean(closed.filter((p) => p.expectedR !== null).map((p) => p.expectedR as number));
   const latent = mean(open.map((p) => live[p.id]?.r).filter((r): r is number => r !== undefined));
   const days = new Set(picks.map((p) => p.day)).size;
@@ -103,6 +128,26 @@ export default function Aciertos() {
             </div>
           </section>
 
+          {diffs.length > 0 && (
+            <section className="card pad">
+              <div className="card-head flat">
+                <div>
+                  <h2>Frente al mercado</h2>
+                  <span className="muted">
+                    Lo importante no es solo si gana o pierde, sino si lo hace mejor que su bolsa en las mismas fechas (S&P 500 para EE. UU.,
+                    IBEX para España, DAX para Alemania…).
+                  </span>
+                </div>
+              </div>
+              <dl className="stats wide">
+                <div><dt>Oportunidades, de media</dt><dd className={tone(allPct)}>{signedPct(allPct)}</dd></div>
+                <div><dt>Su índice, mismas fechas</dt><dd className={tone(marketPct)}>{signedPct(marketPct)}</dd></div>
+                <div><dt>Diferencia</dt><dd className={tone(avgDiff)}>{points(avgDiff)}</dd></div>
+                <div><dt>Mejor que su índice</dt><dd>{diffs.filter((d) => d > 0).length} de {diffs.length}</dd></div>
+              </dl>
+            </section>
+          )}
+
           <p className={`card pad ${enough ? "" : "muted"}`}>
             {enough
               ? avgR > 0
@@ -145,7 +190,7 @@ export default function Aciertos() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Día</th><th>Puesto</th><th>Valor</th><th>Señal</th><th>Nota</th><th>Entrada</th><th>Stop / objetivo</th><th>Estado</th><th>Precio de salida</th><th>Ganancia o pérdida</th><th>En riesgo</th><th>Sesiones</th></tr>
+                  <tr><th>Día</th><th>Puesto</th><th>Valor</th><th>Señal</th><th>Nota</th><th>Entrada</th><th>Stop / objetivo</th><th>Estado</th><th>Precio de salida</th><th>Ganancia o pérdida</th><th>Su índice</th><th>Frente al índice</th><th>En riesgo</th><th>Sesiones</th></tr>
                 </thead>
                 <tbody>
                   {picks.map((p) => {
@@ -162,6 +207,10 @@ export default function Aciertos() {
                         <td>{o ? LABEL[o.status] : checked ? "Sin datos" : "…"}</td>
                         <td>{o ? money(o.exit, p.currency) : "…"}</td>
                         <td className={o ? tone(o.r) : ""}>{o ? signedPct(pctOf(p, o.exit)) : "…"}</td>
+                        <td>{o && typeof o.benchPct === "number" ? signedPct(o.benchPct * 100) : "—"}</td>
+                        <td className={o && vsMarket(p, o.exit, o.benchPct) !== null ? tone(vsMarket(p, o.exit, o.benchPct) as number) : ""}>
+                          {o && vsMarket(p, o.exit, o.benchPct) !== null ? points(vsMarket(p, o.exit, o.benchPct) as number) : "—"}
+                        </td>
                         <td className={o ? tone(o.r) : ""}>{o ? signedR(o.r) : "…"}</td>
                         <td>{o ? o.days : "…"}</td>
                       </tr>
