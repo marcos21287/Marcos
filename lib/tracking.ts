@@ -40,6 +40,10 @@ export async function recordToday() {
   update((s) => {
     if (s.picks.some((p) => p.day === day)) return s;
     const open = new Set(s.picks.filter((p) => !p.result).map((p) => p.symbol));
+    // Pausa tras un stop: un valor no se vuelve a apuntar hasta 20 días después de saltar su stop.
+    for (const p of s.picks) {
+      if (p.result?.status === "stop" && Date.now() - (p.result.exitAt ?? p.at) < 20 * 86_400_000) open.add(p.symbol);
+    }
     const fresh: TrackedPick[] = scan.items
       .map((o, i) => ({
         id: `${day}:${o.symbol}`,

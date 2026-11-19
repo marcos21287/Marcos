@@ -10,7 +10,9 @@ y del Banco Mundial.
   lista en `lib/universe.ts`) con al menos 5 millones negociados al día y muestra los 10 con mejor nota entre los que
   cumplen una señal (ruptura, tendencia o sobreventa). Quedan fuera las empresas con ingresos a la baja, en pérdidas,
   con deuda neta superior a 4 veces el EBITDA, con PER por encima de 50 o que publican resultados en 7 días, y como
-  mucho entran 3 por sector. La nota suma el chequeo de la empresa (crecimiento, rentabilidad, solidez, valoración
+  mucho entran 3 por sector. Solo entran las que cumplen al menos el 75 % de los controles (puede haber días sin
+  ninguna). Con el mercado en alerta (VIX por encima de 20 o S&P 500 bajo su media de 50 sesiones) solo se proponen
+  sobreventas, y los valores que han caído con fuerza en los últimos días se apartan un tiempo. La nota suma el chequeo de la empresa (crecimiento, rentabilidad, solidez, valoración
   frente a su sector, dividendo, técnico, analistas, posiciones cortas y directivos) y su entorno: macro global
   (S&P 500, VIX, tipos a 10 años), país (índice, PIB, inflación, paro, divisa) y sector. Cada señal se simula sobre
   unos cuatro años y medio de histórico (stop a 2 ATR, objetivo a 4 ATR, salida a las 40 sesiones), separando mercado

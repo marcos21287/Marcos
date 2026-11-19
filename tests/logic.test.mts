@@ -130,3 +130,16 @@ test("seguimiento: evalúa una entrada contra las sesiones posteriores", async (
   assert.deepEqual([timeout.status, timeout.days, timeout.r], ["plazo", 40, 0.2]);
   assert.equal(evaluate([], since, 100, 95, 110).status, "abierta");
 });
+
+test("protecciones: alarma de mercado y caída reciente", async () => {
+  const { marketAlarm, recentDropAtr } = await import("../lib/indicators.ts");
+  assert.equal(marketAlarm(18, 105, 100).caution, false);
+  assert.equal(marketAlarm(22.6, 105, 100).caution, true);
+  assert.equal(marketAlarm(15, 98, 100).reasons.length, 1);
+  assert.equal(marketAlarm(null, null, null).caution, false);
+  const bar = (c: number) => ({ high: c + 0.5, low: c - 0.5, close: c, volume: 1 });
+  const steady = Array.from({ length: 60 }, (_, i) => bar(100 + (i % 2)));
+  assert.ok(recentDropAtr(steady)! < 2);
+  const crash = [...steady, bar(98), bar(96), bar(94)];
+  assert.ok(recentDropAtr(crash)! >= 2);
+});

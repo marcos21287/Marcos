@@ -327,3 +327,30 @@ export function evaluate(bars: Bar[], since: number, entry: number, stop: number
   const last = later[later.length - 1];
   return { status: "abierta", r: last ? (last.close - entry) / risk : 0, days: later.length, exit: last ? last.close : entry, exitAt: last?.t ?? null };
 }
+
+// ---- Protecciones: alarma de mercado y caídas recientes ----
+
+/** Umbral de volatilidad a partir del cual el mercado se considera en alerta. */
+export const VIX_ALERT = 20;
+
+/**
+ * Alarma rápida de mercado: salta si el VIX supera 20 o si el S&P 500 cierra por debajo de su media
+ * de 50 sesiones. Reacciona en días, frente a las semanas que tarda la media de 200.
+ */
+export function marketAlarm(vix: number | null, spx: number | null, spxSma50: number | null): { caution: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (vix !== null && vix > VIX_ALERT) reasons.push(`volatilidad (VIX) en ${vix.toFixed(1).replace(".", ",")}, por encima de ${VIX_ALERT}`);
+  if (spx !== null && spxSma50 !== null && spx < spxSma50) reasons.push("S&P 500 por debajo de su media de 50 sesiones");
+  return { caution: reasons.length > 0, reasons };
+}
+
+/**
+ * Caída reciente en múltiplos del ATR: distancia entre el cierre más alto de las últimas 10 sesiones
+ * y el precio actual. A partir de 2 equivale a haber saltado el stop si se hubiera comprado arriba.
+ */
+export function recentDropAtr(bars: Bar[], sessions = 10): number | null {
+  const t = technicals(bars);
+  if (!t || !t.atr || bars.length < sessions + 1) return null;
+  const high = Math.max(...bars.slice(-sessions - 1, -1).map((b) => b.close));
+  return Math.max(0, (high - t.price) / t.atr);
+}

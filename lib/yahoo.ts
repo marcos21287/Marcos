@@ -2,7 +2,7 @@
 import YahooFinance from "yahoo-finance2";
 import { cagr, runChecks, runContextChecks, yearsWithoutCut, type CheckResult, type ContextResult, type MarketStat } from "./checks";
 import { COUNTRIES, SECTORS, WB_INDICATORS } from "./context";
-import { backtest, detectSignal, evaluate, type Outcome, summarizeByRegime, technicals, STOP_ATR, TARGET_ATR, type Bar, type RegimeStats, type Signal, type Technicals, type Trade } from "./indicators";
+import { backtest, detectSignal, evaluate, marketAlarm, recentDropAtr, sma, type Outcome, summarizeByRegime, technicals, STOP_ATR, TARGET_ATR, type Bar, type RegimeStats, type Signal, type Technicals, type Trade } from "./indicators";
 import { BASE_UNIVERSE, SCREENERS } from "./universe";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
@@ -446,6 +446,16 @@ export interface Scan {
   stats: RegimeStats;
   /** Situación actual de la bolsa mundial (S&P 500 frente a su media de 200 sesiones). */
   regime: "alcista" | "bajista" | null;
+  /** Alarma rápida de mercado: con ella activa solo se proponen sobreventas. */
+  alarm: { caution: boolean; reasons: string[] };
+  /** Nota mínima (fracción de controles cumplidos) para entrar en la lista. */
+  minScore: number;
+  /** Valores que no llegan a la nota mínima. */
+  belowScore: number;
+  /** Señales de tendencia o ruptura descartadas por la alarma de mercado. */
+  pausedByMarket: number;
+  /** Señales descartadas por una caída fuerte en los últimos días (equivale a un stop reciente). */
+  recentDrop: number;
   failed: number;
   at: number;
 }
@@ -493,6 +503,10 @@ async function marketRegime(): Promise<{ at: (t: number) => boolean | null; now:
 const MIN_DAILY_VALUE = 5_000_000;
 const DEEP_LIMIT = 80;
 const TOP = 10;
+/** Nota mínima para entrar en la lista: si no la alcanza nadie, la lista sale vacía. */
+const MIN_SCORE = 0.75;
+/** Caída desde el máximo de 10 sesiones, en ATR, a partir de la cual se hace una pausa. */
+const MAX_RECENT_DROP_ATR = 2;
 /** Para no concentrar las 10 en un solo sector, como mucho 3 de cada uno. */
 const MAX_PER_SECTOR = 3;
 
@@ -551,6 +565,11 @@ export function getOpportunities(): Promise<Scan> {
     let scanned = 0;
     let illiquid = 0;
     const regime = await marketRegime();
+    const [spxBars, vixBars] = await Promise.all([getDailyBars("^GSPC").catch(() => [] as Bar[]), getDailyBars("^VIX").catch(() => [] as Bar[])]);
+    const spxCloses = spxBars.map((b) => b.close);
+    const alarm = marketAlarm(vixBars.length ? vixBars[vixBars.length - 1].close : null, spxCloses.length ? spxCloses[spxCloses.length - 1] : null, sma(spxCloses, 50));
+    let pausedByMarket = 0;
+    let recentDrop = 0;
     const chunks: string[][] = [];
     for (let i = 0; i < universe.length; i += 50) chunks.push(universe.slice(i, i + 50));
     await pool(chunks, 3, async (chunk) => {
@@ -603,6 +622,18 @@ export function getOpportunities(): Promise<Scan> {
         const signal = detectSignal(bars);
         const t = technicals(bars);
         if (signal && t && t.sma200) {
+          // Con el mercado en alerta, las compras en tendencia o ruptura se pausan: con bolsa bajista
+          // la simulación las da casi planas o en pérdidas. Las sobreventas sí se mantienen.
+          if (alarm.caution && signal.kind !== "Sobreventa") {
+            pausedByMarket++;
+            return;
+          }
+          // Pausa tras una caída fuerte reciente (como un stop saltado), salvo en sobreventas, que la buscan.
+          const drop = recentDropAtr(bars);
+          if (signal.kind !== "Sobreventa" && drop !== null && drop >= MAX_RECENT_DROP_ATR) {
+            recentDrop++;
+            return;
+          }
           signals.push({ symbol: sym, kind: signal.kind, momentum: t.price / t.sma200 });
           // Se guarda el histórico solo de los valores con señal, que son los que se analizan a fondo.
           cache.set(`bars:${sym}`, { expires: Date.now() + 15 * MIN, value: Promise.resolve(bars) });
@@ -615,7 +646,8 @@ export function getOpportunities(): Promise<Scan> {
       throw new Error("Yahoo Finance ha fallado en demasiados valores; inténtalo de nuevo en unos minutos");
     }
     const stats = summarizeByRegime(trades);
-    const current = regime.now === null ? stats.all : regime.now ? stats.bull : stats.bear;
+    // Con la alarma activa se usa lo que pasó en mercado bajista, aunque la media de 200 aún no haya girado.
+    const current = alarm.caution || regime.now === false ? stats.bear : regime.now ? stats.bull : stats.all;
     signals.sort((a, b) => SIGNAL_ORDER[a.kind] - SIGNAL_ORDER[b.kind] || b.momentum - a.momentum);
 
     // Paso 3: análisis completo de los mejores.
@@ -668,12 +700,14 @@ export function getOpportunities(): Promise<Scan> {
       }
     });
     // Solo cuentan los valores con datos suficientes; se ordenan por la nota total y se dejan los 10 mejores.
-    const ranked = out
-      .filter((o) => o.scored >= 8)
+    const scoredOk = out.filter((o) => o.scored >= 8);
+    const passing = scoredOk.filter((o) => o.totalPassed / o.totalScored >= MIN_SCORE);
+    const belowScore = scoredOk.length - passing.length;
+    const ranked = passing
       .sort((x, y) => y.totalPassed / y.totalScored - x.totalPassed / x.totalScored || y.totalScored - x.totalScored)
       .filter(limitPerSector(MAX_PER_SECTOR))
       .slice(0, TOP);
-    return { items: ranked, stats, regime: regime.now === null ? null : regime.now ? "alcista" : "bajista", excluded, excludedBy, illiquid, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length, failed, at: Date.now() };
+    return { items: ranked, alarm, minScore: MIN_SCORE, belowScore, pausedByMarket, recentDrop, stats, regime: regime.now === null ? null : regime.now ? "alcista" : "bajista", excluded, excludedBy, illiquid, analyzed: out.length + excluded, scanned, candidates: candidates.length, withSignal: signals.length + pausedByMarket + recentDrop, failed, at: Date.now() };
   });
 }
 

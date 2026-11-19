@@ -47,16 +47,16 @@ export default function Oportunidades() {
     <>
       <div className="head">
         <div>
-          <h1>Las 10 mejores oportunidades</h1>
+          <h1>Las mejores oportunidades</h1>
           <p className="muted">
             {data
-              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y estos son los ${data.items.length} con mejor nota, sumando la empresa y su entorno (macro global, país y sector).`
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y ${data.items.length ? `estas son las ${data.items.length} con mejor nota` : "ninguna llega a la nota mínima"}, sumando la empresa y su entorno (macro global, país y sector). Solo entran las que cumplen al menos el ${Math.round(data.minScore * 100)} % de los controles, como mucho 10.`
               : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
         {data && (
-          <span className={`tag ${data.regime === "alcista" ? "green" : data.regime === "bajista" ? "orange" : ""}`}>
-            {data.regime ? `Bolsa mundial ${data.regime} · ` : ""}actualizado {timeAgo(data.at)}
+          <span className={`tag ${data.alarm.caution || data.regime === "bajista" ? "orange" : data.regime === "alcista" ? "green" : ""}`}>
+            {data.alarm.caution ? "Mercado en alerta · " : data.regime ? `Bolsa mundial ${data.regime} · ` : ""}actualizado {timeAgo(data.at)}
           </span>
         )}
       </div>
@@ -102,8 +102,20 @@ export default function Oportunidades() {
         </p>
       </section>
 
+      {data?.alarm.caution && (
+        <section className="card pad alarm">
+          <h2>Mercado en alerta</h2>
+          <p>
+            Se detecta {data.alarm.reasons.join(" y ")}. Con el mercado así, la simulación da las compras en tendencia y ruptura casi planas o
+            en pérdidas, así que hoy solo se proponen sobreventas ({data.pausedByMarket} señales de tendencia o ruptura en pausa). Los resultados
+            esperados usan lo que pasó con bolsa bajista.
+          </p>
+        </section>
+      )}
       {data && (
         <p className="muted small">
+          {data.belowScore} analizadas no llegan a la nota mínima y {data.recentDrop} se han apartado por haber caído con fuerza en los últimos
+          días (como si hubieran saltado el stop).{" "}
           Fuera de la lista por requisitos imprescindibles: {data.excluded} de {data.analyzed} analizadas ({data.excludedBy.ingresos} por ingresos a
           la baja, {data.excludedBy.perdidas} en pérdidas, {data.excludedBy.deuda} con deuda neta superior a 4 veces el EBITDA,{" "}
           {data.excludedBy.valoracion} con PER por encima de 50 y {data.excludedBy.resultados} que publican resultados en los próximos 7 días).
@@ -112,7 +124,12 @@ export default function Oportunidades() {
       )}
       {loading && <p className="card empty">Analizando cientos de valores… la primera vez puede tardar cerca de un minuto.</p>}
       {error && <p className="error">{error}</p>}
-      {data && rows.length === 0 && <p className="card empty">Hoy ningún valor cumple una señal.</p>}
+      {data && rows.length === 0 && (
+        <p className="card empty">
+          Hoy no hay oportunidades buenas: ninguna llega al {Math.round(data.minScore * 100)} % de controles cumplidos
+          {data.alarm.caution ? " con el mercado en alerta" : ""}. No operar también es una decisión.
+        </p>
+      )}
       {data && data.failed > 0 && <p className="muted small">No se pudieron analizar {data.failed} valores.</p>}
 
       <div className="stack">
@@ -208,7 +225,7 @@ export default function Oportunidades() {
               Vigía ha simulado cada señal en los {data.scanned} valores durante unos cuatro años y medio, caída de 2022 incluida: comprar al
               aparecer la señal, stop a 2 veces el rango medio diario (ATR), objetivo a 4 veces y salida a las 40 sesiones si no toca ninguno.
               El resultado se separa según la bolsa mundial estuviera alcista o bajista al entrar; las tarjetas usan el de la situación actual
-              {data.regime ? ` (${data.regime})` : ""}.
+              {data.alarm.caution ? " (mercado en alerta, se usa el de bolsa bajista)" : data.regime ? ` (${data.regime})` : ""}.
             </p>
           </div>
           <div className="table-wrap">
