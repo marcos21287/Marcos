@@ -50,7 +50,7 @@ export default function Oportunidades() {
           <h1>Las mejores oportunidades</h1>
           <p className="muted">
             {data
-              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y ${data.items.length ? `estas son las ${data.items.length} con mejor nota` : "ninguna llega a la nota mínima"}, sumando la empresa y su entorno (macro global, país y sector). Solo entran las que cumplen al menos el ${Math.round(data.minScore * 100)} % de los controles, como mucho 10.`
+              ? `Vigía ha revisado sola ${data.scanned} valores de España, Europa y EE. UU.: ${data.withSignal} cumplen hoy una señal y ${data.items.length === 1 ? "esta es la única que pasa todos los filtros" : data.items.length ? `estas son las ${data.items.length} con mejor nota` : "ninguna llega a la nota mínima"}, sumando la empresa y su entorno (macro global, país y sector). Solo entran las que cumplen al menos el ${Math.round(data.minScore * 100)} % de los controles, como mucho 10.`
               : "Vigía revisa sola cientos de valores de España, Europa y EE. UU. y muestra los que hoy cumplen una señal."}
           </p>
         </div>
